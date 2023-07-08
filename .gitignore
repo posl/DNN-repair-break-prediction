@@ -1,0 +1,15 @@
+.DS_Store
+.vscode/
+__pycache__/
+data/
+logs/
+# これらをgitにあげたい時は以下をコメントアウトするようにします
+*.pt
+*.pdf
+*.npy
+*.npz
+*.ipynb
+*.json
+*.log
+sample_metrics/
+tmp.sh

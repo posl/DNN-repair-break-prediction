@@ -1,0 +1,11 @@
+version: '3'
+services:
+  socrates:
+    container_name: care-prepare
+    tty: true
+    image: python3.7
+    build: ./
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/src
