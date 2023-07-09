@@ -7,14 +7,8 @@ from lib.util import json2dict
 from lib.model import train_model, select_model
 from lib.dataset import BalancedSubsetDataLoader
 
-from collections import defaultdict
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
 import numpy as np
-from torchvision import transforms
-from torchvision.utils import save_image
 
 # Hyper-parameters
 num_restrict = 1000 # rDLMを作るための縮小データセットを作る際に，各ラベルからどれだけサンプルするか
@@ -33,7 +27,7 @@ if __name__=="__main__":
 
     # log setting
     # {dataset}-repair-fairness-{feature}-setting{NO}.logというファイルにログを出す
-    log_file_name = exp_name.replace("training", "apply-apricot")
+    log_file_name = exp_name.replace("training", "train-rdlm")
     logger = set_exp_logging(exp_dir.replace("care", "apricot"), exp_name, log_file_name)
 
     # 設定用のjsonファイルをdictとしてロード
