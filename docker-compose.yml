@@ -1,11 +1,11 @@
 version: '3'
 services:
   socrates:
-    container_name: care-prepare
+    container_name: NN-repair-break
     tty: true
     image: python3.7
     build: ./
     ports:
-      - "8888:8888"
+      - "9999:9999"
     volumes:
       - .:/src

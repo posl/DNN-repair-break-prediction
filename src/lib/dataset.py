@@ -1,4 +1,5 @@
 from collections import namedtuple
+import numpy as np
 from sklearn.model_selection import KFold
 import pandas as pd
 
@@ -26,6 +27,37 @@ class TableDataset(Dataset):
     def __getitem__(self, idx):
         LabeledData = namedtuple("LabeledData", ["x", "y"])
         return LabeledData(self.x[idx], self.y[idx])
+
+
+class BalancedSubsetDataLoader(DataLoader):
+    """ApricotでrDLMを作るためのサブデータセットのためのデータロードのクラス."""
+    def __init__(self, dataloader, num_samples_per_class, **kwargs):
+        self.original_dataset = dataloader.dataset
+        self.num_samples_per_class = num_samples_per_class
+        self.indices = self._create_subset_indices(self.original_dataset, num_samples_per_class)
+        sub_dataset = self._create_subset_dataset(self.original_dataset, self.indices)
+        super().__init__(sub_dataset, **kwargs)
+
+    def _create_subset_indices(self, dataset, num_samples_per_class):
+        label_counts = {}
+        # 各ラベルのサンプル数を数える
+        for index in range(len(dataset)):
+            _, label = dataset[index]
+            label = label.item() # tensorからintに直す
+            if label not in label_counts:
+                label_counts[label] = [index]
+            else:
+                label_counts[label].append(index)
+
+        subset_indices = []
+        for label_indices in label_counts.values():
+            # シャッフルして num_samples_per_class 個選択
+            np.random.shuffle(label_indices)
+            subset_indices.extend(label_indices[:num_samples_per_class])
+        return subset_indices
+
+    def _create_subset_dataset(self, dataset, indices):
+        return torch.utils.data.Subset(dataset, indices)
 
 
 def divide_train_repair(ori_train_dataset, num_fold=5, batch_size=16):
