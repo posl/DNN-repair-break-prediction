@@ -19,6 +19,10 @@ import seaborn as sns
 sns.set_style("white")
 
 
+# FIXME: 定数外部化
+num_reps = 5
+
+
 def pso_fitness(particles, model, dataloader, sens_idx, sens_vals, repaired_positions, alpha=0.1):
     """PSOの目的関数. 入力の形状は (PSOの粒子数, repairするニューロン数).
 
@@ -128,6 +132,10 @@ if __name__ == "__main__":
     data_dir = f"/src/data/{task_name}/{train_setting_name}"
     model_dir = f"/src/models/{task_name}/{train_setting_name}"
 
+    # care resultのディレクトリを作成する
+    care_dir = os.path.join(model_dir, "care-result")
+    os.makedirs(care_dir, exist_ok=True)
+
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
@@ -145,9 +153,9 @@ if __name__ == "__main__":
 
         # FLの結果をロードする
         fl_scores_path = (
-            f"/src/experiments/repair_results/flscore_{exp_name}_fold{k+1}.npy"
+            f"/src/experiments/care/repair_results/flscore_{exp_name}_fold{k+1}.npy"
             if not is_inherit
-            else f"/src/experiments/repair_results/flscore_{inherit_exp_name}_fold{k+1}.npy"
+            else f"/src/experiments/care/repair_results/flscore_{inherit_exp_name}_fold{k+1}.npy"
         )
         fl_scores = np.load(fl_scores_path)
         # repair_ratioの型がintの場合はそれをrepairするニューロン数として（上位何件）解釈し,
@@ -162,29 +170,35 @@ if __name__ == "__main__":
         # TODO: tupleが "(0, 0)" のようにstrになっているのでtupleにする
         repaired_positions = np.array(list(map(eval, repaired_positions)))
 
-        # ===== PSOのブロック =====
-        logger.info("Start Repairing...")
-        optimizer = ps.single.GlobalBestPSO(
-            n_particles=n_particles,
-            dimensions=repair_num,
-            options={"c1": c1, "c2": c2, "w": w},
-            bounds=([[-1.0] * repair_num, [1.0] * repair_num]),  # NOTE: なぜこのようなバウンドを設定しているかわからない
-            init_pos=np.zeros((n_particles, repair_num), dtype=float),
-            ftol=ftol,
-            ftol_iter=ftol_iter,
-        )
-        # arguments of objective function
-        obj_args = {
-            "model": model,
-            "dataloader": repair_loader,
-            "sens_idx": sens_idx,
-            "sens_vals": sens_vals,
-            "alpha": alpha,
-            "repaired_positions": repaired_positions,
-        }
-        # Run optimization
-        best_cost, best_pos = optimizer.optimize(pso_fitness, iters=pso_iters, **obj_args)
-        logger.info(f"Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
-        repair_save_path = f"/src/experiments/repair_results/patch_{exp_name}_fold{k+1}.npy"
-        np.save(repair_save_path, best_pos)
-        logger.info(f"saved to {repair_save_path}")
+        # ランダム性排除のために適用をリピートする
+        for rep in range(num_reps):
+            logger.info(f"starting rep {rep}...")
+            care_save_dir = os.path.join(care_dir, f"rep{rep}")
+            os.makedirs(care_save_dir, exist_ok=True)
+
+            # ===== PSOのブロック =====
+            logger.info("Start Repairing...")
+            optimizer = ps.single.GlobalBestPSO(
+                n_particles=n_particles,
+                dimensions=repair_num,
+                options={"c1": c1, "c2": c2, "w": w},
+                bounds=([[-1.0] * repair_num, [1.0] * repair_num]),  # NOTE: なぜこのようなバウンドを設定しているかわからない
+                init_pos=np.zeros((n_particles, repair_num), dtype=float),
+                ftol=ftol,
+                ftol_iter=ftol_iter,
+            )
+            # arguments of objective function
+            obj_args = {
+                "model": model,
+                "dataloader": repair_loader,
+                "sens_idx": sens_idx,
+                "sens_vals": sens_vals,
+                "alpha": alpha,
+                "repaired_positions": repaired_positions,
+            }
+            # Run optimization
+            best_cost, best_pos = optimizer.optimize(pso_fitness, iters=pso_iters, **obj_args)
+            logger.info(f"Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
+            care_save_path = os.path.join(care_save_dir, f"patch_{exp_name}_fold{k}.npy")
+            np.save(care_save_path, best_pos)
+            logger.info(f"saved to {care_save_path}")

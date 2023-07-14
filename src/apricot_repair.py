@@ -19,6 +19,9 @@ num_reps = 5
 
 # utility function(s)
 def setWeights(model, weight_list):
+    """
+    Set the weights of the model to the given list of weights.
+    """
     for weight, (name, v) in zip(weight_list, model.named_parameters()):
         attrs = name.split(".")
         obj = model
@@ -98,8 +101,8 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
 
         # rDLMを作って訓練して保存することを一定数繰り返す(randomnessの排除のため)
-        # for rep in range(num_reps):
-        for rep in range(1, 5):  # FIXME: 一時的な処理
+        for rep in range(num_reps):
+            logger.info(f"starting rep {rep}...")
             rdlm_list = []
             # rDLMの読み込み
             for rdlm_idx in range(rDLM_num):
@@ -180,7 +183,6 @@ if __name__ == "__main__":
 
                 # trainに使ってないデータセットでaccを確認
                 curr_acc = eval_model(idlm, repair_loader)["metrics"][0]
-                logger.info(f"new accuracy prior training: {curr_acc}")
 
                 # b_idxのバッチでadjust後にaccが向上した場合
                 if best_acc < curr_acc:
@@ -218,3 +220,4 @@ if __name__ == "__main__":
             weight_save_dir = os.path.join(model_dir, "apricot-weight", f"rep{rep}")
             os.makedirs(weight_save_dir, exist_ok=True)
             torch.save(idlm.state_dict(), os.path.join(weight_save_dir, f"adjusted_weights_fold-{k}.pt"))
+            logger.info(f"saved to {os.path.join(weight_save_dir, f'adjusted_weights_fold-{k}.pt')}")
