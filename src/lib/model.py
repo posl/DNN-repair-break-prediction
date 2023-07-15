@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import time
+from collections import defaultdict
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, matthews_corrcoef
 
 # for logging
@@ -410,3 +411,41 @@ def select_model(task_name):
         return BankModel()
     else:
         raise NotImplementedError
+
+
+def get_misclassified_index(y_true, y_pred):
+    """予測ラベルと正解ラベルの組み合わせに対して，誤分類したサンプルのインデックスのリストを取得
+
+    Args:
+        y_true (array-like): 正解ラベルのリスト
+        y_pred (array-like): 予測ラベルのリスト
+
+    Returns:
+        misclf_idx: 誤分類ごとにインデックスのリストをまとめた辞書. キーは (y_true, y_pred), 値がデータのインデックスのリスト.
+    """
+
+    # y_predとy_trueが同じ長さか確認するassertion
+    assert len(y_pred) == len(y_true), "y_pred and y_true must have the same length"
+
+    # 誤分類したサンプル数をカウントするための辞書を初期化
+    misclf_idx = defaultdict(list)
+    for idx, (yp, yt) in enumerate(zip(y_pred, y_true)):
+        if yp != yt:
+            misclf_idx[(yt, yp)].append(idx)
+    return misclf_idx
+
+
+def sort_keys_by_cnt(misclf_dic):
+    """
+    Args:
+        misclf_dic: get_misclassified_indexで得られた辞書
+
+    Returns:
+        sorted_keys: 誤分類の多い順にソートされたキーのリスト
+    """
+
+    cnts = []
+    for misclf_key, misclf_list in misclf_dic.items():
+        cnts.append([misclf_key, len(misclf_list)])
+    sorted_keys = [v[0] for v in sorted(cnts, key=lambda v: v[1], reverse=True)]
+    return sorted_keys
