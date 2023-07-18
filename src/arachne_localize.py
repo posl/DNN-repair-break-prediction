@@ -340,6 +340,7 @@ def run_arachne_localize(X, y, indices_to_wrong, indices_to_correct, target_weig
 if __name__ == "__main__":
     # 実験のディレクトリと実験名を取得
     exp_dir = os.path.dirname(sys.argv[1])
+    arachne_dir = exp_dir.replace("care", "arachne")
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
 
     # log setting
@@ -416,6 +417,10 @@ if __name__ == "__main__":
         assert s == len(indices["wrong"])
         # checking end
 
+        # repairのために使うデータのインデックス
+        indices_for_repair = list(indices_to_correct) + target_indices_wrong
+        X_for_repair, y_for_repair = X_repair[indices_for_repair], y_repair[indices_for_repair]
+
         # target_indicesと同じ数のデータを，正しい予測のデータからランダムにサンプリングする
         # この際, 正しいデータからのサンプリングは各ラベルから均等になるようにサンプリングする
         uniq_labels = np.unique(y_repair[indices["correct"]])
@@ -433,6 +438,8 @@ if __name__ == "__main__":
             # 保存用のディレクトリ作成
             save_dir = os.path.join(loc_save_dir, f"rep{rep}")
             os.makedirs(save_dir, exist_ok=True)
+            used_data_save_dir = os.path.join(arachne_dir, "used_data", task_name, f"rep{rep}")
+            os.makedirs(used_data_save_dir, exist_ok=True)
 
             sampled_indices_correct = []
             # 各ラベルごとにサンプリングする数を計算
@@ -463,6 +470,17 @@ if __name__ == "__main__":
             num_loc_target = len(indices_for_loc)
             target_indices_wrong = list(range(0, num_wrong))
             sampled_indices_correct = list(range(num_wrong, num_loc_target))
+
+            # そのexp_setting, fold, repで使われる, localization用とrepair用のデータを保存
+            used_data_save_path = os.path.join(used_data_save_dir, f"X-y_for_loc-repair_fold-{k}.npz")
+            np.savez(
+                used_data_save_path,
+                X_for_loc=X_for_loc,
+                y_for_loc=y_for_loc,
+                X_for_repair=X_for_repair,
+                y_for_repair=y_for_repair,
+            )
+            logger.info(f"saved to {used_data_save_path}")
 
             # localizationを実行
             indices_to_places_to_fix, front_lst = run_arachne_localize(
