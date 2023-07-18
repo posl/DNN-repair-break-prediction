@@ -418,7 +418,7 @@ if __name__ == "__main__":
         # checking end
 
         # repairのために使うデータのインデックス
-        indices_for_repair = list(indices_to_correct) + target_indices_wrong
+        indices_for_repair = target_indices_wrong + list(indices_to_correct)
         X_for_repair, y_for_repair = X_repair[indices_for_repair], y_repair[indices_for_repair]
 
         # target_indicesと同じ数のデータを，正しい予測のデータからランダムにサンプリングする
@@ -461,7 +461,7 @@ if __name__ == "__main__":
             )
 
             # localizationのために使うデータのインデックス
-            indices_for_loc = sampled_indices_correct + target_indices_wrong
+            indices_for_loc = target_indices_wrong + sampled_indices_correct
             # インデックスからデータを取得
             X_for_loc, y_for_loc = X_repair[indices_for_loc], y_repair[indices_for_loc]
             logger.info(f"X_for_loc.shape = {X_for_loc.shape}, y_for_loc.shape = {y_for_loc.shape}")
