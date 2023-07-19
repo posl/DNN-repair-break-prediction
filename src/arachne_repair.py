@@ -153,7 +153,6 @@ if __name__ == "__main__":
             logger.info(f"places_list: {places_list}")
             indices_to_ptarget_layers = sorted(list(set([idx_to_tl for idx_to_tl, _ in places_list])))
             logger.info(f"Patch target layers: {indices_to_ptarget_layers}")
-            print(f"Patch target layers: {indices_to_ptarget_layers}")
 
             ################################################
             # differential evolutionによるrepairを適用する #
@@ -163,7 +162,7 @@ if __name__ == "__main__":
             num_label = len(set(y_for_repair))
             max_search_num = 100
             patch_aggr = 10
-            batch_size = 32
+            batch_size = 64
 
             # searchのためのクラスのインスタンス化
             searcher = de.DE_searcher(
@@ -184,8 +183,27 @@ if __name__ == "__main__":
                 X_train=X_train,
                 X_repair=X_repair,
                 X_test=X_test,
+                y_train=y_train,
+                y_repair=y_repair,
+                y_test=y_test,
             )
-            searcher.set_indices_to_wrong(indices_to_wrong)
-            name_key = f"misclf-top{topn}-{misclf_true}-to-{misclf_pred}_fold-{k}"
             # DEによるrepairを実行
-            _, saved_path = searcher.search(places_list, name_key=name_key)
+            searcher.set_indices_to_wrong(indices_to_wrong)
+            # 修正後の重みのファイル名
+            file_name = f"misclf-top{topn}-{misclf_true}to{misclf_pred}_fold-{k}.pkl"
+            # 修正後の重みを格納するディレクトリ名
+            save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, file_name)
+            # DEによるrepairを実行
+            is_corr_dic = searcher.search(places_list, save_path=save_path)
+
+            # is_corr_dicの保存先
+            check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
+            os.makedirs(check_save_dir, exist_ok=True)
+            check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
+            # npz形式で保存
+            np.savez(
+                check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"]
+            )
+            logger.info(f"save is_corr_dic to {check_save_path}")

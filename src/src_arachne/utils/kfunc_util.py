@@ -39,6 +39,7 @@ def compute_kfunc(k_fn_mdl_lst, ys, tws, batch_size=None):
         outputs = k_fn_mdl(tws + [ys])
     else:
         num = len(ys)
+        # print(f"num, batch_size : {num}, {batch_size}")
         chunks = return_chunks(num, batch_size)
         outputs_1 = None
         outputs_2 = None
@@ -50,17 +51,29 @@ def compute_kfunc(k_fn_mdl_lst, ys, tws, batch_size=None):
     return outputs
 
 
+# def return_chunks(num, batch_size=None):
+#     num_split = int(np.round(num / batch_size))
+#     if num_split == 0:
+#         num_split = 1
+#     chunks = np.array_split(np.arange(num), num_split)
+#     return chunks
+
+
 def return_chunks(num, batch_size=None):
-    num_split = int(np.round(num / batch_size))
-    if num_split == 0:
-        num_split = 1
-    chunks = np.array_split(np.arange(num), num_split)
+    if batch_size is None or batch_size >= num:
+        return [np.arange(num)]
+
+    # num個あるものをbatch_size個ずつに分割する（num/batch_sizeの切り上げ）
+    num_chunks = (num + batch_size - 1) // batch_size
+    chunks = [np.arange(start, min(start + batch_size, num)) for start in range(0, num, batch_size)]
+    assert len(chunks) == num_chunks
     return chunks
 
 
 def generate_base_mdl(mdl, X, indices_to_tls=None, batch_size=None, act_func=None):
     from src_arachne.utils.gen_frame_graph import build_k_frame_model
 
+    # print(f"X.shape : {X.shape}")
     indices_to_tls = sorted(indices_to_tls)
     if batch_size is None:
         k_fn_mdl, _, _ = build_k_frame_model(mdl, X, indices_to_tls, act_func=act_func)
@@ -72,6 +85,7 @@ def generate_base_mdl(mdl, X, indices_to_tls=None, batch_size=None, act_func=Non
         for chunk in chunks:
             k_fn_mdl, _, _ = build_k_frame_model(mdl, X[chunk], indices_to_tls, act_func=act_func)
             k_fn_mdl_lst.append(k_fn_mdl)
+        # print(f"len(chunks), len(k_fn_mdl_lst) : {len(chunks)}, {len(k_fn_mdl_lst)}")
 
     return k_fn_mdl_lst
 

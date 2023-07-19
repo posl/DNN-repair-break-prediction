@@ -2,8 +2,11 @@ import tensorflow.compat.v1 as tf
 
 tf.disable_v2_behavior()
 
-"""
-"""
+# for logging
+from logging import getLogger
+
+logger = getLogger("base_logger")
+
 import time
 
 
@@ -36,6 +39,9 @@ class Searcher(object):
         X_train=None,
         X_repair=None,
         X_test=None,
+        y_train=None,
+        y_repair=None,
+        y_test=None,
     ):
         """ """
         super(Searcher, self).__init__()
@@ -43,7 +49,12 @@ class Searcher(object):
         # data related initialisation
         self.num_label = num_label
         self.inputs = inputs
+        # 評価のための{X|y}_{train|test|repair}を保持
         self.X_train, self.X_repair, self.X_test = X_train, X_repair, X_test
+        # inputs, X_train, X_repair, X_testの形状を表示
+        logger.info(
+            f"inputs.shape : {inputs.shape}, X_train.shape : {self.X_train.shape}, X_repair.shape : {self.X_repair.shape}, X_test.shape : {self.X_test.shape}"
+        )
         from collections.abc import Iterable
 
         if is_multi_label:
@@ -52,17 +63,22 @@ class Searcher(object):
 
                 self.ground_truth_labels = labels
                 self.labels = format_label(labels, self.num_label)
+                self.y_train = format_label(y_train, self.num_label)
+                self.y_repair = format_label(y_repair, self.num_label)
+                self.y_test = format_label(y_test, self.num_label)
             else:
                 self.labels = labels
+                self.y_train, self.y_repair, self.y_test = y_train, y_repair, y_test
                 self.ground_truth_labels = self.np.argmax(self.labels, axis=1)
         else:
             self.labels = labels
             self.ground_truth_labels = labels
+        logger.info(
+            f"labels.shape : {self.labels.shape}, y_train.shape : {self.y_train.shape}, y_repair.shape : {self.y_repair.shape}, y_test.shape : {self.y_test.shape}"
+        )
 
         self.mdl = model
         self.lstm_mdl = is_lstm
-        self.model_name = "model"
-        self.model_name_format = self.model_name + ".{}"
 
         self.indices_to_correct = indices_to_correct
         self.indices_to_wrong = indices_to_wrong
@@ -76,7 +92,7 @@ class Searcher(object):
         self.is_multi_label = is_multi_label
 
         if not self.lstm_mdl:
-            self.set_base_model_v1(self.X_train, self.X_repair, self.X_test)
+            self.set_base_model_v1()
         else:
             self.set_base_model_v2()
         self.set_target_weights()
@@ -92,7 +108,7 @@ class Searcher(object):
         self.max_search_num = max_search_num
         self.indices_to_sampled_correct = None
 
-    def set_base_model_v1(self, X_train, X_repair, X_test):
+    def set_base_model_v1(self):
         """
         Generate an empyt graph frame for current searcher
         """
@@ -111,10 +127,9 @@ class Searcher(object):
             act_func=self.act_func,
         )
 
-        # TODO: ここにデータが異なる別のモデルリストを作ればいい
         self.fn_mdl_lst_train = self.kfunc_util.generate_base_mdl(
             self.mdl,
-            X_train,
+            self.X_train,
             indices_to_tls=self.indices_to_target_layers,
             batch_size=self.batch_size,
             act_func=self.act_func,
@@ -122,7 +137,7 @@ class Searcher(object):
 
         self.fn_mdl_lst_repair = self.kfunc_util.generate_base_mdl(
             self.mdl,
-            X_repair,
+            self.X_repair,
             indices_to_tls=self.indices_to_target_layers,
             batch_size=self.batch_size,
             act_func=self.act_func,
@@ -130,7 +145,7 @@ class Searcher(object):
 
         self.fn_mdl_lst_test = self.kfunc_util.generate_base_mdl(
             self.mdl,
-            X_test,
+            self.X_test,
             indices_to_tls=self.indices_to_target_layers,
             batch_size=self.batch_size,
             act_func=self.act_func,
@@ -384,7 +399,7 @@ class Searcher(object):
         combined_losses = (new_losses_of_correct, new_losses_of_wrong)
         return predictions, correct_predictions, combined_losses
 
-    def get_results_of_target(self, deltas, indices_to_target):
+    def get_results_of_target(self, deltas, indices_to_target, mode="target"):
         """
         Return the results of the target (can be accessed by indices_to_target)
                 -> results are compute for currnet self.mdl
@@ -392,20 +407,31 @@ class Searcher(object):
                 int: the number of patched
                 float: percentage of the number of patched)
         """
+        # 引数modeに対応するモデルリストとラベルを返すための辞書
+        mode_dict = {
+            "target": (self.fn_mdl_lst, self.labels),
+            "train": (self.fn_mdl_lst_train, self.y_train),
+            "repair": (self.fn_mdl_lst_repair, self.y_repair),
+            "test": (self.fn_mdl_lst_test, self.y_test),
+        }
+
+        mdl_list, labels = mode_dict[mode]
+
         deltas_as_lst = [deltas[idx_to_tl] for idx_to_tl in self.indices_to_target_layers]
-        # ここで予測値を計算してる. 第三引数がポイント.
-        predictions = self.kfunc_util.compute_predictions(
-            self.fn_mdl_lst, self.labels, deltas_as_lst, batch_size=self.batch_size
-        )
+        # ここで予測値を計算
+        predictions = self.kfunc_util.compute_predictions(mdl_list, labels, deltas_as_lst, batch_size=self.batch_size)
 
         if self.is_multi_label:
             correct_predictions = self.np.argmax(predictions, axis=-1)
-            y_labels = self.np.argmax(self.labels, axis=1)
+            y_labels = self.np.argmax(labels, axis=1)
             if correct_predictions.shape != y_labels.shape:
                 correct_predictions = correct_predictions.reshape(y_labels.shape)
             correct_predictions = correct_predictions == y_labels
         else:
-            correct_predictions = self.np.round(predictions).flatten() == self.labels
+            correct_predictions = self.np.round(predictions).flatten() == labels
+
+        if indices_to_target == "all":
+            indices_to_target = list(range(len(correct_predictions)))
 
         target_corr_predcs = correct_predictions[indices_to_target]
         num_of_total_target = len(target_corr_predcs)
@@ -413,7 +439,7 @@ class Searcher(object):
         assert num_of_total_target == len(indices_to_target), msg
         correctly_classified = self.np.sum(target_corr_predcs)
 
-        return (correctly_classified, correctly_classified / num_of_total_target)
+        return correctly_classified, correctly_classified / num_of_total_target, correct_predictions.astype(int)
 
     def get_results_of_target_lstm(self, deltas, indices_to_target):
         """
@@ -457,7 +483,9 @@ class Searcher(object):
                 deltas, self.indices_to_wrong
             )
         else:
-            correctly_classified, perc_correctly_classifed = self.get_results_of_target(deltas, self.indices_to_wrong)
+            correctly_classified, perc_correctly_classifed, _ = self.get_results_of_target(
+                deltas, self.indices_to_wrong
+            )
 
         return (correctly_classified, perc_correctly_classifed)
 
@@ -474,7 +502,7 @@ class Searcher(object):
         if self.lstm_mdl:
             correctly_classified, perc_correctly_classifed = self.get_results_of_target_lstm(deltas, target_indices)
         else:
-            correctly_classified, perc_correctly_classifed = self.get_results_of_target(deltas, target_indices)
+            correctly_classified, perc_correctly_classifed, _ = self.get_results_of_target(deltas, target_indices)
 
         num_of_initially_correct = len(target_indices)
         return (num_of_initially_correct - correctly_classified, 1.0 - perc_correctly_classifed)
@@ -507,8 +535,6 @@ class Searcher(object):
                 True (early stop)
                 False (not yet)
         """
-        if model_name is None:
-            model_name = self.model_name
 
         num_of_patched, perc_num_of_patched = self.get_number_of_patched(new_weights)
         num_of_violated, perc_num_of_violated = self.get_number_of_violated(new_weights)
@@ -530,16 +556,24 @@ class Searcher(object):
         Print out the current result of model_name
         => compute for currnent self.mdl
         """
-        print("***Patching results***\n")
+        logger.info("***Patching results***")
 
         num_of_patched, perc_num_of_patched = self.get_number_of_patched(deltas)
         num_of_violated, perc_num_of_violated = self.get_number_of_violated(deltas)
 
-        print(
-            "\tFor initially wrongly classified:%d -> %d(%f)"
+        logger.info(
+            "For initially wrongly classified:%d -> %d(%f)"
             % (len(self.indices_to_wrong), len(self.indices_to_wrong) - num_of_patched, perc_num_of_patched)
         )
-        print(
-            "\tFor initially correctly classified(violation):%d -> %d(%f)"
+        logger.info(
+            "For initially correctly classified(violation):%d -> %d(%f)"
             % (len(self.indices_to_correct), len(self.indices_to_correct) - num_of_violated, perc_num_of_violated)
         )
+
+        is_corr = {}
+        # 修正後のモデルを使ってtrain, repair, testの各データを予測してみる
+        for div in ["train", "repair", "test"]:
+            num_corr, acc, is_corr_arr = self.get_results_of_target(deltas=deltas, indices_to_target="all", mode=div)
+            logger.info(f"({div}) num_corr : {num_corr}, acc : {acc} = {num_corr}/{len(is_corr_arr)}")
+            is_corr[div] = is_corr_arr
+        return is_corr
