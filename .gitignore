@@ -12,6 +12,6 @@ logs/
 *.ipynb
 *.json
 *.log
-sample_metrics/
+*sample_metrics/
 tmp*.sh
 *pkl

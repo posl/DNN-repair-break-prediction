@@ -100,7 +100,7 @@ if __name__ == "__main__":
                 )
                 is_corr_aft_rep = np.load(is_corr_save_path)[div]
                 is_corr_aft[:, rep] = is_corr_aft_rep
-                is_corr_aft_sum = np.sum(is_corr_aft, axis=1, dtype=np.int32)
+            is_corr_aft_sum = np.sum(is_corr_aft, axis=1, dtype=np.int32)
 
             # 修正前にあってたかどうかと，5回の修正それぞれの後で正しく予測できた回数の合計をまとめたDataFrameを作成
             df = pd.DataFrame({"sm_corr_bef": is_corr_bef, "sm_corr_aft_sum": is_corr_aft_sum})

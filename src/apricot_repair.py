@@ -6,6 +6,7 @@ warnings.filterwarnings("ignore")
 from lib.log import set_exp_logging
 from lib.util import json2dict
 from lib.model import train_model, eval_model, select_model
+from src.src_apricot.apricot_lib import setWeights, AdjustWeights
 
 import torch
 import numpy as np
@@ -15,39 +16,6 @@ num_restrict = 1000  # rDLMを作るための縮小データセットを作る�
 rDLM_num = 20
 batch_size = 64
 num_reps = 5
-
-
-# utility function(s)
-def setWeights(model, weight_list):
-    """
-    Set the weights of the model to the given list of weights.
-    """
-    for weight, (name, v) in zip(weight_list, model.named_parameters()):
-        attrs = name.split(".")
-        obj = model
-        for attr in attrs:
-            obj = getattr(obj, attr)
-        obj.data = weight
-
-
-def AdjustWeights(baseWeights, corrDiff, incorrDiff, a, b, strategy="both-org", lr=1e-3):
-    if "org" in strategy:
-        sign = 1
-    else:
-        sign = -1
-
-    p_corr, p_incorr = a / (a + b), b / (a + b)
-
-    if "both" in strategy:
-        return [
-            b_w + sign * lr * (p_corr * cD - p_incorr * iD) for b_w, cD, iD in zip(baseWeights, corrDiff, incorrDiff)
-        ]
-    elif "corr" in strategy:
-        return [b_w + sign * lr * p_corr * cD for b_w, cD in zip(baseWeights, corrDiff)]
-    elif "incorr" in strategy:
-        return [b_w - sign * lr * p_incorr * iD for b_w, iD in zip(baseWeights, incorrDiff)]
-    else:
-        raise ValueError(f"Unrecognized strategy {strategy}")
 
 
 if __name__ == "__main__":
