@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import time
 from collections import defaultdict
@@ -247,6 +248,131 @@ class BankModel(TabularModel):
         logger.info(self.count_neurons_params())
 
 
+class ImageModel(nn.Module):
+    """
+    画像データのためのNNの基底クラス.
+    共通のメソッドはここにまとめて，各データセットのモデルで上書きできるようにする.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def count_neurons_params(self):
+        """ニューロン数と学習できるパラメータ数を数える. CNNでも同様の実装で動くはず."""
+        num_neurons, num_params = self.input_dim, 0
+        for name, param in self.named_parameters():
+            if not "bias" in name:
+                num_neurons += param.shape[0]
+            num_params += np.prod(param.shape)
+        return {"num_neurons": num_neurons, "num_params": num_params}
+
+    def predict(self, x):
+        """バッチの予測を実行"""
+        out = self.forward(x)
+        prob = nn.Softmax(dim=1)(out)
+        pred = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred}
+
+    # TODO: CARE適用のために以下の実装を行う. Apricotとかでは使わないのでApricot適用中にやるのがよさげ
+    # ======================================================
+    def get_layer_distribution(self, ds, target_lid):
+        pass
+
+    def get_neuron_distribution(self, ds, target_lid, target_nid):
+        pass
+
+    def predict_with_intervention(self, x, hval, target_lid=None, target_nid=None):
+        pass
+
+    def predict_with_repair(self, x, hvals, neuron_location):
+        pass
+
+    # ======================================================
+
+
+class FashionModel(ImageModel):
+    """Fashion-MNIST datasetのためのモデルクラス."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 32, 5, padding=2)
+        self.conv2 = nn.Conv2d(32, 64, 5, padding=2)
+        self.dense1 = nn.Linear(7 * 7 * 64, 1024)
+        self.dropout = nn.Dropout(0.4)
+        self.dense2 = nn.Linear(1024, 10)
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = F.max_pool2d(out, 2)
+        out = F.relu(self.conv2(out))
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        out = F.relu(self.dense1(out))
+        out = self.dropout(out)
+        out = self.dense2(out)
+        return out
+
+
+class GTSRBModel(ImageModel):
+    """GTSRB datasetのためのモデルクラス."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 100, 3)
+        self.batch_normalization1 = nn.BatchNorm2d(100)
+        self.conv2 = nn.Conv2d(100, 150, 4)
+        self.batch_normalization2 = nn.BatchNorm2d(150)
+        self.conv3 = nn.Conv2d(150, 250, 3)
+        self.batch_normalization3 = nn.BatchNorm2d(250)
+        self.dense1 = nn.Linear(250 * 4 * 4, 200)
+        self.batch_normalization4 = nn.BatchNorm1d(200)
+        self.dense2 = nn.Linear(200, 43)
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = self.batch_normalization1(out)
+        out = F.max_pool2d(out, 2)
+        out = F.relu(self.conv2(out))
+        out = self.batch_normalization2(out)
+        out = F.max_pool2d(out, 2)
+        out = F.relu(self.conv3(out))
+        out = self.batch_normalization3(out)
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        out = F.relu(self.dense1(out))
+        out = self.batch_normalization4(out)
+        # out = F.softmax(self.dense2(out), dim=1) #元々の実装ではここだけsoftmaxとられており統一性がない
+        out = self.dense2(out)
+        return out
+
+
+class C10Model(ImageModel):
+    """CIFAR-10 datasetのためのモデルクラス."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 64, 3, padding=1)
+        self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
+        self.dense1 = nn.Linear(2048 * 4, 256)
+        self.dense2 = nn.Linear(256, 256)
+        self.dense3 = nn.Linear(256, 10)
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = F.relu(self.conv2(out))
+        out = F.max_pool2d(out, 2)
+        out = F.relu(self.conv3(out))
+        out = F.relu(self.conv4(out))
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        out = F.relu(self.dense1(out))
+        out = F.relu(self.dense2(out))
+        out = self.dense3(out)
+        return out
+
+
 def train_model(model, dataloader, num_epochs):
     """学習用の関数
 
@@ -409,6 +535,12 @@ def select_model(task_name):
         return CensusModel()
     elif task_name == "bank":
         return BankModel()
+    elif task_name == "fm":
+        return FashionModel()
+    elif task_name == "c10":
+        return C10Model()
+    elif task_name == "gtsrb":
+        return GTSRBModel()
     else:
         raise NotImplementedError
 
