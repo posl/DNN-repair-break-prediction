@@ -1,7 +1,7 @@
 import os, sys
 from collections import defaultdict
 import pandas as pd
-from lib.model import select_model, eval_model
+from lib.model import select_model
 from lib.explanatory_metrics import get_pcs, get_entropy, get_lps, get_loss
 from lib.util import json2dict
 from lib.log import set_exp_logging
@@ -28,9 +28,9 @@ if __name__ == "__main__":
     logger.info(f"Settings: {setting_dict}")
 
     task_name = setting_dict["TASK_NAME"]
-    target_column = setting_dict["TARGET_COLUMN"]
-    num_epochs = setting_dict["NUM_EPOCHS"]
-    batch_size = setting_dict["BATCH_SIZE"]
+    # target_column = setting_dict["TARGET_COLUMN"]
+    # num_epochs = setting_dict["NUM_EPOCHS"]
+    # batch_size = setting_dict["BATCH_SIZE"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # exp. metrics保存用のディレクトリを作成
@@ -72,13 +72,13 @@ if __name__ == "__main__":
             df = pd.DataFrame(columns=["pcs", "lps", "entropy", "loss"])
             for x, y in dataloader.dataset:
                 row_dict = {}
-                out = model.predict(x.view(1, -1))
+                out = model.predict(torch.unsqueeze(x, 0))
                 prob = out["prob"][0]
                 # probを使ったexplanatory metricsの計算
                 row_dict["pcs"] = get_pcs(prob)
                 row_dict["entropy"] = get_entropy(prob)
-                row_dict["lps"] = get_lps(prob, y)
-                row_dict["loss"] = get_loss(prob, y)
+                row_dict["lps"] = get_lps(prob, torch.tensor(y))
+                row_dict["loss"] = get_loss(prob, torch.tensor(y))
                 df = df.append(row_dict, ignore_index=True)
             # 保存先を指定してsaveする
             save_path = os.path.join(expmet_dir, f"{div_name}_fold{k+1}.csv")
