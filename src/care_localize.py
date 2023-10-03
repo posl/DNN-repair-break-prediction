@@ -116,6 +116,16 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
 
+        # original modelのrepair_dsに対するaccを測っておく
+        data = torch.zeros((len(repair_ds), *repair_ds[0][0].shape))
+        labels = torch.zeros((len(repair_ds),))
+        for i, (d, l) in enumerate(repair_ds):
+            data[i] = d
+            labels[i] = l
+        # 元のmodelのdataloaderに対するaccuracyを計算
+        org_preds = model.predict(data)["pred"]
+        acc_org = sum(org_preds == labels) / len(org_preds)
+
         # FL開始時刻
         s = time.clock()
         fl_score = defaultdict(float)
@@ -128,13 +138,13 @@ if __name__ == "__main__":
 
             # 各ニューロンに対する繰り返し
             # NOTE:全ニューロン対象だと時間がかかるので，2個間隔あけて対象ニューロンを決定
-            for target_nid in range(num_neuron, 3):  # 0,3,6,...,1023番目がtarget_nid
+            for target_nid in range(0, num_neuron, 3):  # 0,3,6,...,1023番目がtarget_nid
                 hdist = layer_dist[:, target_nid]
                 hmin, hmax = min(hdist), max(hdist)
                 hvals = np.linspace(hmin, hmax, num_steps)
-                logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
+                logger.info(f"nid={target_nid}, hmin={hmin}, hmax={hmax},\nhvals={hvals}")
                 repair_accdiff_list = calc_acc_average_causal_effect(
-                    model, repair_loader, target_lid=None, target_nid=target_nid, hvals=hvals
+                    model, repair_loader, target_lid=None, target_nid=target_nid, hvals=hvals, acc_org=acc_org
                 )
                 fl_score[f"(fixed, {target_nid})"] = np.mean(repair_accdiff_list)
         # ここまでimageデータ用====================================================

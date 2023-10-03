@@ -234,18 +234,9 @@ def calc_fairness_ub(model, dataloader, sens_idx, hvals, neuron_location, sens_v
     return np.mean(inst_diff_list)
 
 
-def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals):
+def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals, acc_org):
     dataset = dataloader.dataset
     acc_diff_list = []
-    # data, labelsの配列を作成
-    data = torch.zeros((len(dataset), *dataset[0][0].shape))
-    labels = torch.zeros((len(dataset),))
-    for i, (d, l) in enumerate(dataset):
-        data[i] = d
-        labels[i] = l
-    # 元のmodelのdataloaderに対するaccuracyを計算
-    org_preds = model.predict(data)["pred"]
-    acc_org = sum(org_preds == labels) / len(org_preds)
 
     # hvalの各要素に対するループ
     for hval in hvals:
@@ -256,5 +247,5 @@ def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hv
         # 各hvalにおけるaccuracyの差 (どれだけ悪くなったか) を計算し配列に入れていく
         acc_diff = acc_org - acc_tmp
         acc_diff_list.append(acc_diff)
-    print(acc_diff_list)
+    # print(acc_diff_list)
     return acc_diff_list
