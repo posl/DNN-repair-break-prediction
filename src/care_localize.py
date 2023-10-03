@@ -138,7 +138,7 @@ if __name__ == "__main__":
 
             # 各ニューロンに対する繰り返し
             # NOTE:全ニューロン対象だと時間がかかるので，2個間隔あけて対象ニューロンを決定
-            for target_nid in range(0, num_neuron, 3):  # 0,3,6,...,1023番目がtarget_nid
+            for target_nid in range(0, num_neuron, 3):  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
                 hdist = layer_dist[:, target_nid]
                 hmin, hmax = min(hdist), max(hdist)
                 hvals = np.linspace(hmin, hmax, num_steps)
@@ -171,7 +171,7 @@ if __name__ == "__main__":
             plot_fl_score(fl_score, exp_name, k)
         # ここまでtabularデータ用====================================================
 
-        # FL修了時刻
+        # FL修了時刻 (あくまでfoldごとなので実際はこの時間 * fold数かかる)
         e = time.clock()
         logger.info(f"End time: {e}")
         logger.info(f"Total execution time: {e-s}")
