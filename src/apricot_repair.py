@@ -4,9 +4,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from lib.log import set_exp_logging
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.model import train_model, eval_model, select_model
-from src.src_apricot.apricot_lib import setWeights, AdjustWeights
+from src_apricot.apricot_lib import setWeights, AdjustWeights
 
 import torch
 import numpy as np
@@ -37,17 +37,24 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    train_repair_data_path = setting_dict["TRAIN-REPAIR_DATA_PATH"]
-    test_data_path = setting_dict["TEST_DATA_PATH"]
-    target_column = setting_dict["TARGET_COLUMN"]
-    num_epochs = setting_dict["NUM_EPOCHS"]
-    num_epochs_rdlm = num_epochs // 4  # rDLM訓練用のエポック数
     batch_size = setting_dict["BATCH_SIZE"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{task_name}/{exp_name}"
     model_dir = f"/src/models/{task_name}/{exp_name}"
+
+    # 分類クラス数
+    if dataset_type(task_name) == "tabular":
+        num_class = 2
+        post_train_epoch = 20
+    elif dataset_type(task_name) == "image":
+        num_class = 10
+        post_train_epoch = 5
+
+    # GPUが使えるかを確認
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info(f"device: {device}")
 
     # rDLMの保存先として, models/以下の各設定のディレクトリにrDLM用のディレクトリを作る
     rdlm_dir = os.path.join(model_dir, "rDLM")
@@ -60,9 +67,10 @@ if __name__ == "__main__":
         idlm = select_model(task_name=task_name)
         idlm_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         idlm.load_state_dict(torch.load(idlm_path))
+        idlm.to(device)
         idlm.eval()
 
-        # foldに対するdataloaderをロード
+        # foldに対するdataload`erをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
         train_loader = torch.load(train_data_path)
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
@@ -70,6 +78,10 @@ if __name__ == "__main__":
 
         # rDLMを作って訓練して保存することを一定数繰り返す(randomnessの排除のため)
         for rep in range(num_reps):
+            # FIXME: 一時的な処置
+            # rep0, 1, 2かつk=0のときはスキップ
+            if rep <= 2 and k == 0:
+                continue
             logger.info(f"starting rep {rep}...")
             rdlm_list = []
             # rDLMの読み込み
@@ -81,6 +93,7 @@ if __name__ == "__main__":
                 rdlm = select_model(task_name=task_name)
                 rdlm_path = os.path.join(rdlm_save_dir, f"trained_model_fold-{k}_rDLM-{rdlm_idx}.pt")
                 rdlm.load_state_dict(torch.load(rdlm_path))
+                rdlm.to(device)
                 rdlm.eval()
                 rdlm_list.append(rdlm)
             logger.info(f"len(rdlm_list)={len(rdlm_list)}")
@@ -89,7 +102,9 @@ if __name__ == "__main__":
             # actual process
             # ===================================
             logger.info("starting Apricot actual process...")
-            base_acc = eval_model(idlm, repair_loader)["metrics"][0]  # 最後にimprovementを表示したいのでここでbaseのaccを保存しておく
+            base_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][
+                0
+            ]  # 最後にimprovementを表示したいのでここでbaseのaccを保存しておく
             best_acc = base_acc  # 暫定的なbest_acc
             logger.info(f"initial iDLM repair acc.={base_acc}")
             with torch.no_grad():
@@ -103,6 +118,7 @@ if __name__ == "__main__":
 
             # train loaderからバッチを取り出して処理を実行
             for b_idx, (x, x_class) in enumerate(train_loader):
+                x, x_class = x.to(device), x_class.to(device)
                 with torch.no_grad():
                     yOrigin = torch.argmax(idlm(x), dim=1)  # バッチの各サンプルに対する予測結果. 形状は(batch_size, )
                     ySubList = [
@@ -150,7 +166,7 @@ if __name__ == "__main__":
                             setWeights(idlm, baseWeights)
 
                 # trainに使ってないデータセットでaccを確認
-                curr_acc = eval_model(idlm, repair_loader)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][0]
 
                 # b_idxのバッチでadjust後にaccが向上した場合
                 if best_acc < curr_acc:
@@ -171,9 +187,9 @@ if __name__ == "__main__":
                         break
                 logger.info(f"batch {b_idx} done, last improvement {b_idx-last_improvement} batches ago.")
                 # 短いエポックで再度訓練する
-                train_model(idlm, train_loader, num_epochs=20)
+                train_model(idlm, train_loader, num_epochs=post_train_epoch)
                 # 再びaccを確認
-                curr_acc = eval_model(idlm, repair_loader)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][0]
                 logger.info(f"new accuracy post training: {curr_acc}")
 
             # 時間計測

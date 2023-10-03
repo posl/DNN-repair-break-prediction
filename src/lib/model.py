@@ -259,7 +259,9 @@ class ImageModel(nn.Module):
 
     def count_neurons_params(self):
         """ニューロン数と学習できるパラメータ数を数える. CNNでも同様の実装で動くはず."""
-        num_neurons, num_params = self.input_dim, 0
+        num_neurons, num_params = 1, 0
+        for i in self.input_dim:
+            num_neurons *= i
         for name, param in self.named_parameters():
             if not "bias" in name:
                 num_neurons += param.shape[0]
@@ -295,6 +297,7 @@ class FashionModel(ImageModel):
 
     def __init__(self):
         super().__init__()
+        self.input_dim = (1, 28, 28)
         self.conv1 = nn.Conv2d(1, 32, 5, padding=2)
         self.conv2 = nn.Conv2d(32, 64, 5, padding=2)
         self.dense1 = nn.Linear(7 * 7 * 64, 1024)
@@ -312,12 +315,83 @@ class FashionModel(ImageModel):
         out = self.dense2(out)
         return out
 
+    def get_layer_distribution(self, ds, target_lid=None):
+        """データx \in dsを入力した際の, 指定したレイヤのニューロンの値（活性化関数通す前, i.e., 全結合の後）の分布を出力する.
+        出力されるndarrayの形状は, (データ数, target_lidのニューロン数)となる.
+
+        Args:
+            ds (torch.Dataset): 入力データセット.
+            target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed).
+
+        Returns:
+            ndarray: 各データサンプルに対する指定したレイヤにおける各ニューロンの値が入ったndarray
+        """
+        # ラベルはどうでもいいのでデータの部分だけ取り出して1つのテンソルにする
+        data = torch.zeros((len(ds), *ds[0][0].shape))
+        for i, (d, _) in enumerate(ds):
+            data[i] = d
+        # 順伝搬を所望のレイヤまで行う
+        out = data
+        # layer 0
+        out = F.relu(self.conv1(out))
+        # layer 1
+        out = F.max_pool2d(out, 2)
+        # layer 2
+        out = F.relu(self.conv2(out))
+        # layer 3
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        # layer 4
+        # NOTE: hard coding the target lid is 4. i.e. The output of dense1 (1,024 neurons) are subject to repair.
+        out = self.dense1(out)
+        return out.detach().numpy()
+
+        hvals.append(out.tolist())
+        out = F.relu(out)
+        # layer 5
+        out = self.dropout(out)
+        # layer 6
+        out = self.dense2(out)
+
+    def predict_with_intervention(self, ds, hval, target_lid=None, target_nid=None):
+        # データ, ラベルの部分を取り出してそれぞれテンソルにする
+        data = torch.zeros((len(ds), *ds[0][0].shape))
+        labels = torch.zeros((len(ds),))
+        for i, (d, l) in enumerate(ds):
+            data[i] = d
+            labels[i] = l
+        # 順伝搬を行う
+        out = data
+        # layer 0
+        out = F.relu(self.conv1(out))
+        # layer 1
+        out = F.max_pool2d(out, 2)
+        # layer 2
+        out = F.relu(self.conv2(out))
+        # layer 3
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        # layer 4
+        # NOTE: hard coding the target lid is 4. i.e. The output of dense1 (1,024 neurons) are subject to repair.
+        out = self.dense1(out)
+        out[:, target_nid] = torch.tensor(hval, dtype=torch.float32)
+        out = F.relu(out)
+        # layer 5
+        out = self.dropout(out)
+        # layer 6
+        out = self.dense2(out)
+        # 最終層の出力から予測確率とラベルを取得
+        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        pred = torch.argmax(out, dim=1)
+        return {"prob": prob, "pred": pred, "labels": labels}
+
 
 class GTSRBModel(ImageModel):
     """GTSRB datasetのためのモデルクラス."""
 
     def __init__(self):
         super().__init__()
+        self.input_dim = (3, 48, 48)
         self.conv1 = nn.Conv2d(3, 100, 3)
         self.batch_normalization1 = nn.BatchNorm2d(100)
         self.conv2 = nn.Conv2d(100, 150, 4)
@@ -351,6 +425,7 @@ class C10Model(ImageModel):
 
     def __init__(self):
         super().__init__()
+        self.input_dim = (3, 28, 28)
         self.conv1 = nn.Conv2d(3, 64, 3, padding=1)
         self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
@@ -460,26 +535,28 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
 
     # データセットの各バッチを予測
     for x, y in dataloader.dataset:
+        x = x.to(device)
         if not is_repair:
             # 修正前の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            out = model.predict(x.view(1, -1))
+            out = model.predict(torch.unsqueeze(x, 0))
         else:
             # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
             assert (
                 hvals is not None and neuron_location is not None
             ), "despite is_repair=True, hvals and neuron_location are None!!!"
             # 修正後の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            out = model.predict_with_repair(x.view(1, -1), hvals, neuron_location)
+            out = model.predict_with_repair(torch.unsqueeze(x, 0), hvals, neuron_location)
         prob, pred = out["prob"], out["pred"]
         y_true.append(y)
         y_pred.append(pred.item())
+    # HACK: 以下assertionは2値分類のみの場合なのでコメントアウトしました
     # 二値分類なので0, 1以外の値があったらassertion errorにする
-    assert (
-        np.unique(np.array(y_true)).size == 2
-    ), f"np.unique(np.array(y_true)).size == {np.unique(np.array(y_true)).size}"
-    assert (
-        np.unique(np.array(y_pred)).size <= 2
-    ), f"np.unique(np.array(y_pred)).size == {np.unique(np.array(y_pred)).size}"
+    # assert (
+    #     np.unique(np.array(y_true)).size == 2
+    # ), f"np.unique(np.array(y_true)).size == {np.unique(np.array(y_true)).size}"
+    # assert (
+    #     np.unique(np.array(y_pred)).size <= 2
+    # ), f"np.unique(np.array(y_pred)).size == {np.unique(np.array(y_pred)).size}"
     # numpy配列にする
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
@@ -487,7 +564,7 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
     return y_true, y_pred, correctness_arr
 
 
-def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=None):
+def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=None, num_class=2):
     """モデルの評価用の関数.
 
     Args:
@@ -496,17 +573,19 @@ def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=N
         is_repair (bool): repair後の重みを使って予測するかどうか. ここをTrueにした場合は必ずこの後ろの2つの引数も指定しなければならない.
         hvals (list of float): 修正後のニューロンの値のリスト. indexは第三引数のneuron_locationと対応.
         neuron_location (list of tuple(int, int)): 修正するニューロンの位置(レイヤ番号, ニューロン番号)を表すタプルのリスト.
+        num_class (int): 分類クラス数. 2値分類なら2, 多値分類ならクラス数. メトリクスの取り方を決めるのに必要.
 
     Returns:
         *float: dataloaderでモデルを評価した各種メトリクス.
     """
     # correctnessを評価
     y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, is_repair, hvals, neuron_location)
+    average = "binary" if num_class == 2 else "macro"
     # 各評価指標を算出
     acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred)
-    pre = precision_score(y_true, y_pred)
-    rec = recall_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average=average)
+    pre = precision_score(y_true, y_pred, average=average)
+    rec = recall_score(y_true, y_pred, average=average)
     mcc = matthews_corrcoef(y_true, y_pred)
     # dictにして返す
     ret_dict = {}

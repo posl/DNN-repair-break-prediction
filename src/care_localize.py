@@ -1,10 +1,10 @@
-import os, sys
+import os, sys, time
 from collections import defaultdict
 
 import numpy as np
 from lib.model import select_model
-from lib.fairness import calc_average_causal_effect
-from lib.util import json2dict
+from lib.fairness import calc_average_causal_effect, calc_acc_average_causal_effect
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -64,31 +64,37 @@ if __name__ == "__main__":
     # 訓練時の設定名を取得
     train_setting_name = os.path.splitext(train_setting_path)[0]
 
+    # 訓練時の設定も読み込む
+    train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
+    logger.info(f"TRAIN Settings: {train_setting_dict}")
+    num_fold = train_setting_dict["NUM_FOLD"]
+    task_name = train_setting_dict["TASK_NAME"]
+
     # fairnessの計算のための情報をパース
-    sens_name = setting_dict["SENS_NAME"]
-    sens_idx = setting_dict["SENS_IDX"]
-    sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
-    target_cls = setting_dict["TARGET_CLS"]
+    # 画像データセットに関してはfairness関連の情報はいらない
+    if dataset_type(task_name) is "tabular":
+        sens_name = setting_dict["SENS_NAME"]
+        sens_idx = setting_dict["SENS_IDX"]
+        sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
+        target_cls = setting_dict["TARGET_CLS"]
 
     # localizationのための情報をパース
     num_steps = setting_dict["NUM_STEPS"]
     # これらの値は数値かリストで指定可能にするためにevalする
     target_lids = setting_dict["TARGET_LAYER"]
     target_nids = setting_dict["TARGET_NEURON"]
-    # 数値の場合は要素数1のリストにする
-    if isinstance(target_lids, int):
-        target_lids = [target_lids]
-    if isinstance(target_nids, int):
-        target_nids = [target_nids]
-    assert len(target_lids) == len(
-        target_nids
-    ), f"Error: len(target_lid)({len(target_lids)}) != len(target_nid)({len(target_nids)})"
-
-    # 訓練時の設定も読み込む
-    train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
-    logger.info(f"TRAIN Settings: {train_setting_dict}")
-    num_fold = train_setting_dict["NUM_FOLD"]
-    task_name = train_setting_dict["TASK_NAME"]
+    # lids, nids未指定の場合は後で処理
+    if not (target_lids and target_nids):
+        target_lids = target_nids = None
+    else:
+        # 数値の場合は要素数1のリストにする
+        if isinstance(target_lids, int):
+            target_lids = [target_lids]
+        if isinstance(target_nids, int):
+            target_nids = [target_nids]
+        assert len(target_lids) == len(
+            target_nids
+        ), f"Error: len(target_lid)({len(target_lids)}) != len(target_nid)({len(target_nids)})"
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{task_name}/{train_setting_name}"
@@ -110,29 +116,58 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
 
+        # FL開始時刻
+        s = time.clock()
         fl_score = defaultdict(float)
         # 計算したい各レイヤ/ニューロンに対してFLのスコア（Average Causal Effects）を算出
-        for target_lid, target_nids_for_layer in zip(target_lids, target_nids):
-            # 対象のレイヤに対する各ニューロンの順伝搬の値を計算
-            layer_dist = model.get_layer_distribution(repair_ds, target_lid=target_lid)
+        # ここからimageデータ用====================================================
+        if (target_lids is None) and (target_nids is None):
+            layer_dist = model.get_layer_distribution(repair_ds)
+            # print(layer_dist.shape)
+            num_neuron = layer_dist.shape[1]
 
-            for target_nid in target_nids_for_layer:
-                logger.info(f"target layer={target_lid}, target neuron={target_nid}")
-
+            # 各ニューロンに対する繰り返し
+            # NOTE:全ニューロン対象だと時間がかかるので，2個間隔あけて対象ニューロンを決定
+            for target_nid in range(num_neuron, 3):  # 0,3,6,...,1023番目がtarget_nid
                 hdist = layer_dist[:, target_nid]
                 hmin, hmax = min(hdist), max(hdist)
                 hvals = np.linspace(hmin, hmax, num_steps)
                 logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
-
-                repair_fairness_list = calc_average_causal_effect(
-                    model, repair_loader, sens_idx, target_lid, target_nid, hvals, sens_vals, target_cls
+                repair_accdiff_list = calc_acc_average_causal_effect(
+                    model, repair_loader, target_lid=None, target_nid=target_nid, hvals=hvals
                 )
-                fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
-        # ニューロンごとのfl_scoreのプロットを保存
-        plot_fl_score(fl_score, exp_name, k)
+                fl_score[f"(fixed, {target_nid})"] = np.mean(repair_accdiff_list)
+        # ここまでimageデータ用====================================================
+
+        # ここからtabularデータ用====================================================
+        else:
+            for target_lid, target_nids_for_layer in zip(target_lids, target_nids):
+                # 対象のレイヤに対する各ニューロンの順伝搬の値を計算
+                layer_dist = model.get_layer_distribution(repair_ds, target_lid=target_lid)
+
+                for target_nid in target_nids_for_layer:
+                    logger.info(f"target layer={target_lid}, target neuron={target_nid}")
+
+                    hdist = layer_dist[:, target_nid]
+                    hmin, hmax = min(hdist), max(hdist)
+                    hvals = np.linspace(hmin, hmax, num_steps)
+                    logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
+
+                    repair_fairness_list = calc_average_causal_effect(
+                        model, repair_loader, sens_idx, target_lid, target_nid, hvals, sens_vals, target_cls
+                    )
+                    fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
+            # ニューロンごとのfl_scoreのプロットを保存
+            plot_fl_score(fl_score, exp_name, k)
+        # ここまでtabularデータ用====================================================
+
+        # FL修了時刻
+        e = time.clock()
+        logger.info(f"End time: {e}")
+        logger.info(f"Total execution time: {e-s}")
         # fl_scoreを降順に並び替えて保存する
         fl_score_sorted = np.array(sorted(fl_score.items(), key=lambda v: v[1], reverse=True))
-        logger.info(f"SORTED FL SCORE\n{fl_score_sorted}")
-        fl_score_save_path = f"/src/experiments/repair_results/flscore_{exp_name}_fold{k+1}.npy"
+        logger.info(f"SORTED FL SCORE: \n{fl_score_sorted}")
+        fl_score_save_path = os.path.join(exp_dir, f"repair_results/flscore_{exp_name}_fold{k+1}.npy")
         np.save(fl_score_save_path, fl_score_sorted)
         logger.info(f"saved to {fl_score_save_path}")

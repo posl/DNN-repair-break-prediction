@@ -12,8 +12,8 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import tensorflow.keras.backend as K
 
-from keras.models import load_model, Model
-from keras.layers import Input
+from tensorflow.keras.models import load_model, Model
+from tensorflow.keras.layers import Input
 from sklearn.preprocessing import Normalizer
 from lib.util import json2dict
 from lib.log import set_exp_logging

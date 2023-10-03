@@ -31,6 +31,7 @@ class TableDataset(Dataset):
 
 class BalancedSubsetDataLoader(DataLoader):
     """ApricotでrDLMを作るためのサブデータセットのためのデータロードのクラス."""
+
     def __init__(self, dataloader, num_samples_per_class, **kwargs):
         self.original_dataset = dataloader.dataset
         self.num_samples_per_class = num_samples_per_class
@@ -43,7 +44,8 @@ class BalancedSubsetDataLoader(DataLoader):
         # 各ラベルのサンプル数を数える
         for index in range(len(dataset)):
             _, label = dataset[index]
-            label = label.item() # tensorからintに直す
+            if isinstance(label, torch.Tensor) and label.shape == torch.Size([]):
+                label = label.item()  # tensorからintに直す
             if label not in label_counts:
                 label_counts[label] = [index]
             else:

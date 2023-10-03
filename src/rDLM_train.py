@@ -4,7 +4,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from lib.log import set_exp_logging
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.model import train_model, select_model
 from lib.dataset import BalancedSubsetDataLoader
 
@@ -28,7 +28,6 @@ if __name__ == "__main__":
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
 
     # log setting
-    # {dataset}-repair-fairness-{feature}-setting{NO}.logというファイルにログを出す
     log_file_name = exp_name.replace("training", "train-rdlm")
     logger = set_exp_logging(exp_dir.replace("care", "apricot"), exp_name, log_file_name)
 
@@ -37,9 +36,6 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    train_repair_data_path = setting_dict["TRAIN-REPAIR_DATA_PATH"]
-    test_data_path = setting_dict["TEST_DATA_PATH"]
-    target_column = setting_dict["TARGET_COLUMN"]
     num_epochs = setting_dict["NUM_EPOCHS"]
     num_epochs_rdlm = num_epochs // 4  # rDLM訓練用のエポック数
     batch_size = setting_dict["BATCH_SIZE"]
@@ -61,7 +57,10 @@ if __name__ == "__main__":
         train_loader = torch.load(train_data_path)
 
         # ラベルの頻度を集計
-        labels = np.array(train_loader.dataset)[:, 1]  # ここでwarning出るけど動くからOK
+        if dataset_type(task_name) == "tabular":
+            labels = np.array(train_loader.dataset)[:, 1]  # ここでwarning出るけど動くからOK
+        elif dataset_type(task_name) == "image":
+            labels = np.array([d[1] for d in train_loader.dataset])
         _, cnts = np.unique(labels, return_counts=True)
         logger.info(f"cnts={cnts}")
         # 最も頻度が少ないラベルのサンプル数の半分を，reduced Datasetを作る際の各ラベルからのサンプル数とする
@@ -71,8 +70,7 @@ if __name__ == "__main__":
         assert num_samples_per_class >= 50, "num_samples_per_class must be greater than or equal to 50"
 
         # rDLMを作って訓練して保存することを一定数繰り返す(randomnessの排除のため)
-        # for rep in range(num_reps):
-        for rep in range(1, 5):  # FIXME: 一時的な処理
+        for rep in range(num_reps):
             logger.info(f"starting rep {rep}...")
             # 保存用のディレクトリ作成
             save_dir = os.path.join(rdlm_dir, f"rep{rep}")

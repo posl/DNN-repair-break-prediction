@@ -40,11 +40,6 @@ if __name__ == "__main__":
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
     sens_name = "age" if task_name == "bank" else "gender"
-    train_repair_data_path = setting_dict["TRAIN-REPAIR_DATA_PATH"]
-    test_data_path = setting_dict["TEST_DATA_PATH"]
-    target_column = setting_dict["TARGET_COLUMN"]
-    num_epochs = setting_dict["NUM_EPOCHS"]
-    batch_size = setting_dict["BATCH_SIZE"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # モデルとデータの読み込み先のディレクトリ

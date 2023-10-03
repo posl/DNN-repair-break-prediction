@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
     # sample metrics保存用のディレクトリを作成
     sm_dir = os.path.join(exp_dir, "sample_metrics", log_file_name)
-    os.makedirs(sm_dir, exist_ok=True)
+    os.makedirs(sm_dir, exist_ok=True)``
 
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい

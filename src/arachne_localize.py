@@ -1,11 +1,13 @@
-import os, sys, re
+import os, sys, re, time
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 from lib.model import get_misclassified_index, sort_keys_by_cnt
 import tensorflow as tf
-import tensorflow.keras.backend as K
+from tensorflow import keras 
+import keras.backend as K
+
 
 from keras.models import load_model, Model
 from keras.layers import Input
@@ -228,6 +230,7 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
         logger.info(f"idx_to_tl = {idx_to_tl}")
         t_w, lname = vs
 
+        # FC層の場合
         ############ FI begin #########
         # 対象レイヤが0, 1層目の場合
         if idx_to_tl == 0 or idx_to_tl == 1:
@@ -269,6 +272,8 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
         grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
         logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
         ############ GL end #########
+
+        # TODO: Conv2D層の場合
 
         # 2種類のコストのペア
         # NOTE: (N, 2), N=target layerの前のレイヤと繋がってる重みの数 (前レイヤのニューロン数 * targetレイヤのニューロン数)
@@ -378,6 +383,7 @@ if __name__ == "__main__":
 
         # 学習済みモデルをロード (keras)
         model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
+        # TODO: lossを多クラス用にも対応できるようif文などでなんとかする
         model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
         # 予測のスコアとそこから予測ラベル取得
         pred_scores = model.predict(X_repair, verbose=-1)
@@ -482,11 +488,18 @@ if __name__ == "__main__":
             )
             logger.info(f"saved to {used_data_save_path}")
 
+            # 開始時間計測
+            s = time.clock()
+            logger.info(f"Start time: {s}")
             # localizationを実行
             indices_to_places_to_fix, front_lst = run_arachne_localize(
                 X_for_loc, y_for_loc, target_indices_wrong, sampled_indices_correct, target_weight, model
             )
             logger.info(f"Places to fix {indices_to_places_to_fix}")
+            # 終了時間計測
+            e = time.clock()
+            logger.info(f"End time: {e}")
+            logger.info(f"Total execution time: {e-s}")
 
             # 修正すべき位置の保存用のdfを作成
             output_df = pd.DataFrame(
