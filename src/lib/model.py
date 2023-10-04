@@ -522,7 +522,7 @@ class C10Model(ImageModel):
         out = self.dense3(out)
         return out
 
-    def predict_with_intervention(self, ds, hval, target_lid=None, target_nid=None):
+    def get_layer_distribution(self, ds, target_lid=None):
         # データ, ラベルの部分を取り出してそれぞれテンソルにする
         data = torch.zeros((len(ds), *ds[0][0].shape))
         labels = torch.zeros((len(ds),))

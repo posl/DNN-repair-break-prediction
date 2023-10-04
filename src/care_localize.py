@@ -133,7 +133,7 @@ if __name__ == "__main__":
         # ここからimageデータ用====================================================
         if (target_lids is None) and (target_nids is None):
             layer_dist = model.get_layer_distribution(repair_ds)
-            # print(layer_dist.shape)
+            logger.info(f"layer_dist.shape={layer_dist.shape}")
             num_neuron = layer_dist.shape[1]
 
             # 各ニューロンに対する繰り返し

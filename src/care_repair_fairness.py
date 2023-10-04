@@ -1,7 +1,7 @@
 import os, sys
 
 from lib.model import select_model
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 from lib.fairness import calc_fairness_ub
 import numpy as np
@@ -100,17 +100,19 @@ if __name__ == "__main__":
     # 訓練時の設定名を取得
     train_setting_name = os.path.splitext(train_setting_path)[0]
 
-    # fairnessの計算のための情報をパース
-    sens_name = setting_dict["SENS_NAME"]
-    sens_idx = setting_dict["SENS_IDX"]
-    sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
-    target_cls = setting_dict["TARGET_CLS"]
-
     # 訓練時の設定も読み込む
     train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
     logger.info(f"TRAIN Settings: {train_setting_dict}")
     num_fold = train_setting_dict["NUM_FOLD"]
     task_name = train_setting_dict["TASK_NAME"]
+
+    # fairnessの計算のための情報をパース
+    # 画像データセットに関してはfairness関連の情報はいらない
+    if dataset_type(task_name) is "tabular":
+        sens_name = setting_dict["SENS_NAME"]
+        sens_idx = setting_dict["SENS_IDX"]
+        sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
+        target_cls = setting_dict["TARGET_CLS"]
 
     # リペアする割合 (疑惑値の上位何％をrepair対象にするか)
     # repair_ratioの型がintの場合はそれをrepairするニューロン数として（上位何件）解釈し,
