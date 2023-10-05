@@ -150,8 +150,7 @@ if __name__ == "__main__":
 
             # 各ニューロンに対する繰り返し
             # NOTE:全ニューロン対象だと時間がかかるので，2個間隔あけて対象ニューロンを決定
-            # for target_nid in range(0, num_neuron, 3):  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
-            for target_nid in [0, 3, 6]:  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
+            for target_nid in range(0, num_neuron, 3):  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
                 hdist = layer_dist[:, target_nid]
                 hmin, hmax = min(hdist), max(hdist)
                 hvals = np.linspace(hmin, hmax, num_steps)
