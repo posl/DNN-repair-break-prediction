@@ -6,3 +6,5 @@ alias ll="ls -al"
 alias his="history | grep"
 alias python="time python"
 alias jp="jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''"
+# Change Timezone from UTC to JST
+export TZ="Asia/Tokyo"

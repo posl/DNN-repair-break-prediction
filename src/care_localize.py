@@ -55,6 +55,10 @@ if __name__ == "__main__":
     # ロガーの取得
     logger = set_exp_logging(exp_dir, exp_name, log_file_name)
 
+    # GPUが使えるか確認
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info(f"device: {device}")
+
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
     setting_dict = json2dict(sys.argv[1])
@@ -108,6 +112,7 @@ if __name__ == "__main__":
         model = select_model(task_name=task_name)
         model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         model.load_state_dict(torch.load(model_path))
+        model.to(device)
         model.eval()
 
         # foldに対するdataloaderをロード
@@ -116,15 +121,16 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
 
-        # original modelのrepair_dsに対するaccを測っておく
-        data = torch.zeros((len(repair_ds), *repair_ds[0][0].shape))
-        labels = torch.zeros((len(repair_ds),))
-        for i, (d, l) in enumerate(repair_ds):
-            data[i] = d
-            labels[i] = l
         # 元のmodelのdataloaderに対するaccuracyを計算
-        org_preds = model.predict(data)["pred"]
-        acc_org = sum(org_preds == labels) / len(org_preds)
+        total_corr = 0  # acc計算用
+        # repair_loaderからバッチを読み込み
+        for batch_idx, (data, labels) in enumerate(repair_loader):
+            data, labels = data.to(device), labels.to(device)
+            org_preds = model.predict(data, device=device)["pred"]
+            num_corr = sum(org_preds == labels)
+            total_corr += num_corr.cpu()
+        acc_org = total_corr / len(repair_ds)
+        logger.info(f"acc_org={acc_org}")
 
         # FL開始時刻
         s = time.clock()
@@ -132,19 +138,32 @@ if __name__ == "__main__":
         # 計算したい各レイヤ/ニューロンに対してFLのスコア（Average Causal Effects）を算出
         # ここからimageデータ用====================================================
         if (target_lids is None) and (target_nids is None):
-            layer_dist = model.get_layer_distribution(repair_ds)
+            layer_dist = []
+            # バッチごとにあるレイヤの出力を取得して最後に全バッチ結合する
+            for batch_idx, (data, labels) in enumerate(repair_loader):
+                data, labels = data.to(device), labels.to(device)
+                layer_dist_batch = model.get_layer_distribution(data, device=device)
+                layer_dist.append(layer_dist_batch)
+            layer_dist = np.concatenate(layer_dist, axis=0)
             logger.info(f"layer_dist.shape={layer_dist.shape}")
             num_neuron = layer_dist.shape[1]
 
             # 各ニューロンに対する繰り返し
             # NOTE:全ニューロン対象だと時間がかかるので，2個間隔あけて対象ニューロンを決定
-            for target_nid in range(0, num_neuron, 3):  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
+            # for target_nid in range(0, num_neuron, 3):  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
+            for target_nid in [0, 3, 6]:  # (FMモデルの場合)0,3,6,...,1023番目がtarget_nid
                 hdist = layer_dist[:, target_nid]
                 hmin, hmax = min(hdist), max(hdist)
                 hvals = np.linspace(hmin, hmax, num_steps)
                 logger.info(f"nid={target_nid}, hmin={hmin}, hmax={hmax},\nhvals={hvals}")
                 repair_accdiff_list = calc_acc_average_causal_effect(
-                    model, repair_loader, target_lid=None, target_nid=target_nid, hvals=hvals, acc_org=acc_org
+                    model,
+                    repair_loader,
+                    target_lid=None,
+                    target_nid=target_nid,
+                    hvals=hvals,
+                    acc_org=acc_org,
+                    device=device,
                 )
                 fl_score[f"(fixed, {target_nid})"] = np.mean(repair_accdiff_list)
         # ここまでimageデータ用====================================================
@@ -173,8 +192,8 @@ if __name__ == "__main__":
 
         # FL修了時刻 (あくまでfoldごとなので実際はこの時間 * fold数かかる)
         e = time.clock()
-        logger.info(f"End time: {e}")
-        logger.info(f"Total execution time: {e-s}")
+        # logger.info(f"End time: {e}")
+        logger.info(f"Total execution time for FL: {e-s} sec.")
         # fl_scoreを降順に並び替えて保存する
         fl_score_sorted = np.array(sorted(fl_score.items(), key=lambda v: v[1], reverse=True))
         logger.info(f"SORTED FL SCORE: \n{fl_score_sorted}")

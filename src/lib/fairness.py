@@ -234,16 +234,22 @@ def calc_fairness_ub(model, dataloader, sens_idx, hvals, neuron_location, sens_v
     return np.mean(inst_diff_list)
 
 
-def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals, acc_org):
-    dataset = dataloader.dataset
+def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals, acc_org, device):
     acc_diff_list = []
 
     # hvalの各要素に対するループ
     for hval in hvals:
         sum_diff = 0.0
-        ret_dicts = model.predict_with_intervention(dataset, hval, target_lid, target_nid)
-        preds, labels = ret_dicts["pred"], ret_dicts["labels"]
-        acc_tmp = sum(preds == labels) / len(preds)
+        acc_tmp = 0  # acc計算用
+        # メモリ不足対策のためバッチに分けてaccを計算してからまとめる
+        for batch_idx, (data, labels) in enumerate(dataloader):
+            data = data.to(device)
+            ret_dicts = model.predict_with_intervention(data, hval, target_lid, target_nid, device)
+            preds = ret_dicts["pred"].cpu()
+            num_corr = sum(preds == labels)
+            acc_tmp += num_corr / len(preds)
+        # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
+        acc_tmp /= len(dataloader)
         # 各hvalにおけるaccuracyの差 (どれだけ悪くなったか) を計算し配列に入れていく
         acc_diff = acc_org - acc_tmp
         acc_diff_list.append(acc_diff)

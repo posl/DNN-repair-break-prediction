@@ -268,7 +268,8 @@ class ImageModel(nn.Module):
             num_params += np.prod(param.shape)
         return {"num_neurons": num_neurons, "num_params": num_params}
 
-    def predict(self, x):
+    def predict(self, x, device="cpu"):
+        x = x.to(device)
         """バッチの予測を実行"""
         out = self.forward(x)
         prob = nn.Softmax(dim=1)(out)
@@ -315,21 +316,17 @@ class FashionModel(ImageModel):
         out = self.dense2(out)
         return out
 
-    def get_layer_distribution(self, ds, target_lid=None):
-        """データx \in dsを入力した際の, 指定したレイヤのニューロンの値（活性化関数通す前, i.e., 全結合の後）の分布を出力する.
+    def get_layer_distribution(self, data, target_lid=None, device="cpu"):
+        """データdataを入力した際の, 指定したレイヤのニューロンの値（活性化関数通す前, i.e., 全結合の後）の分布を出力する.
         出力されるndarrayの形状は, (データ数, target_lidのニューロン数)となる.
 
         Args:
-            ds (torch.Dataset): 入力データセット.
+            data (torch.Tensor): 入力データ (呼び出し側でバッチに分割されてる想定).
             target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed).
 
         Returns:
             ndarray: 各データサンプルに対する指定したレイヤにおける各ニューロンの値が入ったndarray
         """
-        # ラベルはどうでもいいのでデータの部分だけ取り出して1つのテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        for i, (d, _) in enumerate(ds):
-            data[i] = d
         # 順伝搬を所望のレイヤまで行う
         out = data
         # layer 0
@@ -344,7 +341,7 @@ class FashionModel(ImageModel):
         # layer 4
         # NOTE: hard coding the target lid is 4. i.e. The output of dense1 (1,024 neurons) are subject to repair.
         out = self.dense1(out)
-        return out.detach().numpy()
+        return out.detach().cpu().numpy()
 
         # out = F.relu(out)
         # # layer 5
@@ -352,10 +349,36 @@ class FashionModel(ImageModel):
         # # layer 6
         # out = self.dense2(out)
 
-    def predict_with_intervention(self, ds, hval, target_lid=None, target_nid=None):
+    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+        # 順伝搬を行う
+        out = data
+        # layer 0
+        out = F.relu(self.conv1(out))
+        # layer 1
+        out = F.max_pool2d(out, 2)
+        # layer 2
+        out = F.relu(self.conv2(out))
+        # layer 3
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        # layer 4
+        # NOTE: hard coding the target lid is 4. i.e. The output of dense1 (1,024 neurons) are subject to repair.
+        out = self.dense1(out)
+        out[:, target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+        out = F.relu(out)
+        # layer 5
+        out = self.dropout(out)
+        # layer 6
+        out = self.dense2(out)
+        # 最終層の出力から予測確率とラベルを取得
+        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        pred = torch.argmax(out, dim=1)
+        return {"prob": prob, "pred": pred}
+
+    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        labels = torch.zeros((len(ds),))
+        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
+        labels = torch.zeros((len(ds),), device=device)
         for i, (d, l) in enumerate(ds):
             data[i] = d
             labels[i] = l
@@ -373,7 +396,9 @@ class FashionModel(ImageModel):
         # layer 4
         # NOTE: hard coding the target lid is 4. i.e. The output of dense1 (1,024 neurons) are subject to repair.
         out = self.dense1(out)
-        out[:, target_nid] = torch.tensor(hval, dtype=torch.float32)
+        # tabular modelの実装と同様に各neuronに対するhvalの適用を行う
+        for hval, target_nid in zip(hvals, neuron_location):
+            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
         out = F.relu(out)
         # layer 5
         out = self.dropout(out)
@@ -418,11 +443,7 @@ class GTSRBModel(ImageModel):
         out = self.dense2(out)
         return out
 
-    def get_layer_distribution(self, ds, target_lid=None):
-        # ラベルはどうでもいいのでデータの部分だけ取り出して1つのテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        for i, (d, _) in enumerate(ds):
-            data[i] = d
+    def get_layer_distribution(self, data, target_lid=None, device="cpu"):
         # 順伝搬を所望のレイヤまで行う
         out = data
         # layer 0
@@ -447,16 +468,52 @@ class GTSRBModel(ImageModel):
         # layer 9
         # NOTE: hard coding the target lid is 9. i.e. The output of dense1 (200 neurons) are subject to repair.
         out = self.dense1(out)
-        return out.detach().numpy()
+        return out.detach().cpu().numpy()
         # out = F.relu(out)
         # out = self.batch_normalization4(out)
         # # out = F.softmax(self.dense2(out), dim=1) #元々の実装ではここだけsoftmaxとられており統一性がない
         # out = self.dense2(out)
 
-    def predict_with_intervention(self, ds, hval, target_lid=None, target_nid=None):
+    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+        # 順伝搬を行う
+        out = data
+        # layer 0
+        out = F.relu(self.conv1(out))
+        # layer 1
+        out = self.batch_normalization1(out)
+        # layer 2
+        out = F.max_pool2d(out, 2)
+        # layer 3
+        out = F.relu(self.conv2(out))
+        # layer 4
+        out = self.batch_normalization2(out)
+        # layer 5
+        out = F.max_pool2d(out, 2)
+        # layer 6
+        out = F.relu(self.conv3(out))
+        # layer 7
+        out = self.batch_normalization3(out)
+        # layer 8
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        # layer 9
+        # NOTE: hard coding the target lid is 9. i.e. The output of dense1 (200 neurons) are subject to repair.
+        out = self.dense1(out)
+        out[:, target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+        out = F.relu(out)
+        # layer 10
+        out = self.batch_normalization4(out)
+        # layer 11
+        out = self.dense2(out)
+        # 最終層の出力から予測確率とラベルを取得
+        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        pred = torch.argmax(out, dim=1)
+        return {"prob": prob, "pred": pred}
+
+    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        labels = torch.zeros((len(ds),))
+        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
+        labels = torch.zeros((len(ds),), device=device)
         for i, (d, l) in enumerate(ds):
             data[i] = d
             labels[i] = l
@@ -484,6 +541,8 @@ class GTSRBModel(ImageModel):
         # layer 9
         # NOTE: hard coding the target lid is 9. i.e. The output of dense1 (200 neurons) are subject to repair.
         out = self.dense1(out)
+        for hval, target_nid in zip(hvals, neuron_location):
+            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
         out = F.relu(out)
         # layer 10
         out = self.batch_normalization4(out)
@@ -522,13 +581,7 @@ class C10Model(ImageModel):
         out = self.dense3(out)
         return out
 
-    def get_layer_distribution(self, ds, target_lid=None):
-        # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        labels = torch.zeros((len(ds),))
-        for i, (d, l) in enumerate(ds):
-            data[i] = d
-            labels[i] = l
+    def get_layer_distribution(self, data, target_lid=None, device="cpu"):
         # 順伝搬を所望のレイヤまで行う
         out = data
         # layer 0
@@ -549,15 +602,45 @@ class C10Model(ImageModel):
         # layer 7
         # NOTE: hard coding the target lid is 7. i.e. The output of dense1 (256 neurons) are subject to repair.
         out = self.dense2(out)
-        return out.detach().numpy()
+        return out.detach().cpu().numpy()
         out = F.relu(out)
         # layer 8
         # out = self.dense3(out)
 
-    def predict_with_intervention(self, ds, hval, target_lid=None, target_nid=None):
+    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+        # 順伝搬を行う
+        out = data
+        # layer 0
+        out = F.relu(self.conv1(out))
+        # layer 1
+        out = F.relu(self.conv2(out))
+        # layer 2
+        out = F.max_pool2d(out, 2)
+        # layer 3
+        out = F.relu(self.conv3(out))
+        # layer 4
+        out = F.relu(self.conv4(out))
+        # layer 5
+        out = F.max_pool2d(out, 2)
+        out = out.view(out.size(0), -1)
+        # layer 6
+        out = F.relu(self.dense1(out))
+        # layer 7
+        # NOTE: hard coding the target lid is 7. i.e. The output of dense1 (256 neurons) are subject to repair.
+        out = self.dense2(out)
+        out[:, target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+        out = F.relu(out)
+        # layer 8
+        out = self.dense3(out)
+        # 最終層の出力から予測確率とラベルを取得
+        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        pred = torch.argmax(out, dim=1)
+        return {"prob": prob, "pred": pred}
+
+    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape))
-        labels = torch.zeros((len(ds),))
+        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
+        labels = torch.zeros((len(ds),), device=device)
         for i, (d, l) in enumerate(ds):
             data[i] = d
             labels[i] = l
@@ -581,6 +664,8 @@ class C10Model(ImageModel):
         # layer 7
         # NOTE: hard coding the target lid is 7. i.e. The output of dense1 (256 neurons) are subject to repair.
         out = self.dense2(out)
+        for hval, target_nid in zip(hvals, neuron_location):
+            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
         out = F.relu(out)
         # layer 8
         out = self.dense3(out)

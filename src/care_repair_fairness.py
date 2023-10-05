@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, time
 
 from lib.model import select_model
 from lib.util import json2dict, dataset_type
@@ -23,8 +23,8 @@ sns.set_style("white")
 num_reps = 5
 
 
-def pso_fitness(particles, model, dataloader, sens_idx, sens_vals, repaired_positions, alpha=0.1):
-    """PSOの目的関数. 入力の形状は (PSOの粒子数, repairするニューロン数).
+def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repaired_positions, alpha=0.1):
+    """PSOの目的関数 (for tabular dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
 
     Args:
 
@@ -63,6 +63,41 @@ def pso_fitness(particles, model, dataloader, sens_idx, sens_vals, repaired_posi
     return result
 
 
+def pso_fitness_image(particles, model, dataloader, repaired_positions, device):
+    """PSOの目的関数 (for image dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
+    公平性でなくaccのみを考慮するのがtabularとの違い.
+
+    Args:
+
+        particles (ndarray): ニューロンの重み?(TODO)をどれくらい調整するか. (PSOの粒子数, repairするニューロン数)という形状. PSOにおけるswarmに対応.
+        model (nn.Module): 修正対象のモデル.
+        dataloader (torch.DataLoader): repairに使うデータセットのデータローダ
+        repaired_positions (list of int): 修正するニューロンの位置(ニューロン番号)を表すリスト.
+        device (str): GPUかCPUか.
+
+    Returns:
+        result (list of float): 各粒子の評価値 (論文の式で示されている目的関数の値). 形状は(粒子数, )の1次元配列.
+    """
+    result = []
+    ds = dataloader.dataset
+    # データセットのデータとラベルを取り出す
+    data, labels = [], []
+    for d, l in ds:
+        data.append(d)
+        labels.append(l)
+    # ラベルの配列
+    y_true = labels
+    # 各粒子に対してCAREのPSOの目的関数の値を算出し, resultにappendする
+    for p in particles:
+        pred_dict = model.predict_with_repair(ds, hvals=p, neuron_location=repaired_positions, device=device)
+        pred, prob = pred_dict["pred"], pred_dict["prob"]
+        acc = accuracy_score(y_true, pred.cpu().tolist())  # NOTE: PySwarmはGPU対応しなさそうなのでCPUにしておく
+        # デフォルトは最小化問題になってるので, 1-accにする
+        cost = 1 - acc
+        result.append(cost)
+    return result
+
+
 if __name__ == "__main__":
     # 実験のディレクトリと実験名を取得
     exp_dir = os.path.dirname(sys.argv[1])
@@ -73,6 +108,10 @@ if __name__ == "__main__":
     logger = set_exp_logging(exp_dir, exp_name, log_file_name)
     # FIXME: pyswarmsのせいで標準出力とreport.logに勝手にログが出るのをなんとかしたい．
     rep = Reporter(logger=logger)
+
+    # GPUが使えるか確認
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info(f"device: {device}")
 
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
@@ -145,6 +184,7 @@ if __name__ == "__main__":
         model = select_model(task_name=task_name)
         model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         model.load_state_dict(torch.load(model_path))
+        model.to(device)
         model.eval()
 
         # foldに対するdataloaderをロード
@@ -169,7 +209,10 @@ if __name__ == "__main__":
         logger.info(f"# of repaired neuron = {repair_num}\n{fl_scores[:repair_num]}")
         # 修正対象のニューロンの位置(何層目の,何番目のニューロンか)
         repaired_positions = fl_scores[:repair_num][:, 0]
-        # TODO: tupleが "(0, 0)" のようにstrになっているのでtupleにする
+        # target_lidが固定かどうかチェック
+        if "fixed" in repaired_positions[0]:
+            # fixedの部分は-1に変えてから, evalする
+            repaired_positions = np.array([s.replace("fixed", "-1") for s in repaired_positions])
         repaired_positions = np.array(list(map(eval, repaired_positions)))
 
         # ランダム性排除のために適用をリピートする
@@ -179,6 +222,8 @@ if __name__ == "__main__":
             os.makedirs(care_save_dir, exist_ok=True)
 
             # ===== PSOのブロック =====
+            # repair開始時刻
+            s = time.clock()
             logger.info("Start Repairing...")
             optimizer = ps.single.GlobalBestPSO(
                 n_particles=n_particles,
@@ -190,17 +235,32 @@ if __name__ == "__main__":
                 ftol_iter=ftol_iter,
             )
             # arguments of objective function
-            obj_args = {
-                "model": model,
-                "dataloader": repair_loader,
-                "sens_idx": sens_idx,
-                "sens_vals": sens_vals,
-                "alpha": alpha,
-                "repaired_positions": repaired_positions,
-            }
-            # Run optimization
-            best_cost, best_pos = optimizer.optimize(pso_fitness, iters=pso_iters, **obj_args)
+            # for tabular dataset
+            if dataset_type(task_name) is "tabular":
+                obj_args = {
+                    "model": model,
+                    "dataloader": repair_loader,
+                    "sens_idx": sens_idx,
+                    "sens_vals": sens_vals,
+                    "alpha": alpha,
+                    "repaired_positions": repaired_positions,
+                }
+                # Run optimization
+                best_cost, best_pos = optimizer.optimize(pso_fitness_tabular, iters=pso_iters, **obj_args)
+            # for image dataset
+            else:
+                obj_args = {
+                    "model": model,
+                    "dataloader": repair_loader,
+                    "repaired_positions": repaired_positions,
+                    "device": device,
+                }
+                # Run optimization
+                best_cost, best_pos = optimizer.optimize(pso_fitness_image, iters=pso_iters, **obj_args)
+            # repair開始時刻
+            e = time.clock()
             logger.info(f"Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
+            logger.info(f"Total execution time for Repair: {e-s}")
             care_save_path = os.path.join(care_save_dir, f"patch_{exp_name}_fold{k}.npy")
             np.save(care_save_path, best_pos)
             logger.info(f"saved to {care_save_path}")
