@@ -89,11 +89,18 @@ def pso_fitness_image(particles, model, dataloader, repaired_positions, device):
     y_true = labels
     # 各粒子に対してCAREのPSOの目的関数の値を算出し, resultにappendする
     for p in particles:
-        pred_dict = model.predict_with_repair(ds, hvals=p, neuron_location=repaired_positions, device=device)
-        pred, prob = pred_dict["pred"], pred_dict["prob"]
-        acc = accuracy_score(y_true, pred.cpu().tolist())  # NOTE: PySwarmはGPU対応しなさそうなのでCPUにしておく
+        # TODO: ここをバッチ処理する
+        acc_tmp = 0
+        for batch_idx, (data, labels) in enumerate(dataloader):
+            data = data.to(device)
+            ret_dicts = model.predict_with_repair(data, hvals=p, neuron_location=repaired_positions, device=device)
+            preds = ret_dicts["pred"].cpu()
+            num_corr = sum(preds == labels)
+            acc_tmp += num_corr / len(preds)
+        # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
+        acc_tmp /= len(dataloader)
         # デフォルトは最小化問題になってるので, 1-accにする
-        cost = 1 - acc
+        cost = 1 - acc_tmp
         result.append(cost)
     return result
 
@@ -191,7 +198,6 @@ if __name__ == "__main__":
         # NOTE: repairだけ使うことにしてみる
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
-        repair_ds = repair_loader.dataset
 
         # FLの結果をロードする
         fl_scores_path = (
@@ -260,7 +266,7 @@ if __name__ == "__main__":
             # repair開始時刻
             e = time.clock()
             logger.info(f"Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
-            logger.info(f"Total execution time for Repair: {e-s}")
+            logger.info(f"Total execution time for Repair: {e-s} sec.")
             care_save_path = os.path.join(care_save_dir, f"patch_{exp_name}_fold{k}.npy")
             np.save(care_save_path, best_pos)
             logger.info(f"saved to {care_save_path}")

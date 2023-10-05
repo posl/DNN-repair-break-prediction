@@ -375,13 +375,7 @@ class FashionModel(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
-        # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
-        labels = torch.zeros((len(ds),), device=device)
-        for i, (d, l) in enumerate(ds):
-            data[i] = d
-            labels[i] = l
+    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -407,7 +401,7 @@ class FashionModel(ImageModel):
         # 最終層の出力から予測確率とラベルを取得
         prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
         pred = torch.argmax(out, dim=1)
-        return {"prob": prob, "pred": pred, "labels": labels}
+        return {"prob": prob, "pred": pred}
 
 
 class GTSRBModel(ImageModel):
@@ -510,13 +504,7 @@ class GTSRBModel(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
-        # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
-        labels = torch.zeros((len(ds),), device=device)
-        for i, (d, l) in enumerate(ds):
-            data[i] = d
-            labels[i] = l
+    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -551,7 +539,7 @@ class GTSRBModel(ImageModel):
         # 最終層の出力から予測確率とラベルを取得
         prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
         pred = torch.argmax(out, dim=1)
-        return {"prob": prob, "pred": pred, "labels": labels}
+        return {"prob": prob, "pred": pred}
 
 
 class C10Model(ImageModel):
@@ -637,13 +625,7 @@ class C10Model(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, ds, hvals, target_lid=None, neuron_location=None, device="cpu"):
-        # データ, ラベルの部分を取り出してそれぞれテンソルにする
-        data = torch.zeros((len(ds), *ds[0][0].shape), device=device)
-        labels = torch.zeros((len(ds),), device=device)
-        for i, (d, l) in enumerate(ds):
-            data[i] = d
-            labels[i] = l
+    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -672,7 +654,7 @@ class C10Model(ImageModel):
         # 最終層の出力から予測確率とラベルを取得
         prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
         pred = torch.argmax(out, dim=1)
-        return {"prob": prob, "pred": pred, "labels": labels}
+        return {"prob": prob, "pred": pred}
 
 
 def train_model(model, dataloader, num_epochs):
