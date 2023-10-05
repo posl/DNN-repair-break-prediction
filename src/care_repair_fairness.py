@@ -79,14 +79,6 @@ def pso_fitness_image(particles, model, dataloader, repaired_positions, device):
         result (list of float): 各粒子の評価値 (論文の式で示されている目的関数の値). 形状は(粒子数, )の1次元配列.
     """
     result = []
-    ds = dataloader.dataset
-    # データセットのデータとラベルを取り出す
-    data, labels = [], []
-    for d, l in ds:
-        data.append(d)
-        labels.append(l)
-    # ラベルの配列
-    y_true = labels
     # 各粒子に対してCAREのPSOの目的関数の値を算出し, resultにappendする
     for p in particles:
         # TODO: ここをバッチ処理する
@@ -222,6 +214,7 @@ if __name__ == "__main__":
         repaired_positions = np.array(list(map(eval, repaired_positions)))
 
         # ランダム性排除のために適用をリピートする
+        time_for_reps = []  # repごとの時間記録用
         for rep in range(num_reps):
             logger.info(f"starting rep {rep}...")
             care_save_dir = os.path.join(care_dir, f"rep{rep}")
@@ -265,8 +258,16 @@ if __name__ == "__main__":
                 best_cost, best_pos = optimizer.optimize(pso_fitness_image, iters=pso_iters, **obj_args)
             # repair開始時刻
             e = time.clock()
-            logger.info(f"Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
-            logger.info(f"Total execution time for Repair: {e-s} sec.")
+            # repごとの経過時間
+            time_for_rep = e - s
+            time_for_reps.append(time_for_rep)
+            # log表示
+            logger.info(f"[fold: {k}, rep: {rep}] Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
+            logger.info(f"rep time:{time_for_rep} sec.")
+            # PSOの結果得られた修正後のニューロン値を保存
             care_save_path = os.path.join(care_save_dir, f"patch_{exp_name}_fold{k}.npy")
             np.save(care_save_path, best_pos)
             logger.info(f"saved to {care_save_path}")
+        # repごとの経過時間を平均してfoldごとの時間をログに出す
+        time_for_fold = np.mean(time_for_reps)
+        logger.info(f"Total execution time for Repair: {time_for_fold} sec.")
