@@ -63,9 +63,9 @@ def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repai
     return result
 
 
-def pso_fitness_image(particles, model, dataloader, repaired_positions, device):
+def pso_fitness_acc(particles, model, dataloader, repaired_positions, device):
     """PSOの目的関数 (for image dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
-    公平性でなくaccのみを考慮するのがtabularとの違い.
+    公平性でなくaccのみを考慮する.
 
     Args:
 
@@ -235,6 +235,9 @@ if __name__ == "__main__":
             )
             # arguments of objective function
             # for tabular dataset
+            # FIXME:以下参照.
+            # ここの分岐をtabludarかどうかではなくfairness repairをするかどうかのフラグで分岐したい.
+            # image datasetに対するfairness repairの場合は例外終了する．
             if dataset_type(task_name) is "tabular":
                 obj_args = {
                     "model": model,
@@ -255,7 +258,7 @@ if __name__ == "__main__":
                     "device": device,
                 }
                 # Run optimization
-                best_cost, best_pos = optimizer.optimize(pso_fitness_image, iters=pso_iters, **obj_args)
+                best_cost, best_pos = optimizer.optimize(pso_fitness_acc, iters=pso_iters, **obj_args)
             # repair開始時刻
             e = time.clock()
             # repごとの経過時間
