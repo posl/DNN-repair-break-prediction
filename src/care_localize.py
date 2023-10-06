@@ -13,6 +13,9 @@ import seaborn as sns
 # plot setting
 sns.set_style("white")
 
+# tabluerデータセットにおいてfairness repairをするかどうか
+TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化する
+
 
 def plot_fl_score(fl_score, exp_name, k):
     """各レイヤ, ニューロンにおけるFLスコアをプロットして保存する.
@@ -167,28 +170,67 @@ if __name__ == "__main__":
                 fl_score[f"(fixed, {target_nid})"] = np.mean(repair_accdiff_list)
         # ここまでimageデータ用====================================================
 
-        # ここからtabularデータ用====================================================
-        # TODO: Imageの方と同じようにGPU高速化やバッチ処理によるメモリ節約できるか？
         else:
-            for target_lid, target_nids_for_layer in zip(target_lids, target_nids):
-                # 対象のレイヤに対する各ニューロンの順伝搬の値を計算
-                layer_dist = model.get_layer_distribution(repair_ds, target_lid=target_lid)
+            if not TABULAR_FAIRNESS_SW:
+                # (新しい方) ここからtabularデータ用====================================================
+                # 古い方からの変更点
+                # - Imageの方と同じようにGPU高速化やバッチ処理によるメモリ節約.
+                # - calc_average_causal_effectでなくcalc_acc_average_causal_effectを使うようにした (つまりfairness repairではなくacc repair).
+                # target_lids, 各ターゲットレイヤに対するtarget_nidsも必ず指定されているという前提
+                for target_lid, target_nids_for_layer in zip(target_lids, target_nids):
+                    layer_dist = []
+                    # バッチごとにあるレイヤの出力を取得して最後に全バッチ結合する
+                    for batch_idx, (data, labels) in enumerate(repair_loader):
+                        data, labels = data.to(device), labels.to(device)
+                        layer_dist_batch = model.get_layer_distribution(data, target_lid=target_lid, device=device)
+                        layer_dist.append(layer_dist_batch)
+                    layer_dist = np.concatenate(layer_dist, axis=0)
+                    logger.info(f"layer_dist.shape={layer_dist.shape}")
 
-                for target_nid in target_nids_for_layer:
-                    logger.info(f"target layer={target_lid}, target neuron={target_nid}")
+                    # あるターゲットレイヤの各ターゲットニューロンに対しACEを計算
+                    for target_nid in target_nids_for_layer:
+                        logger.info(f"target layer={target_lid}, target neuron={target_nid}")
 
-                    hdist = layer_dist[:, target_nid]
-                    hmin, hmax = min(hdist), max(hdist)
-                    hvals = np.linspace(hmin, hmax, num_steps)
-                    logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
+                        hdist = layer_dist[:, target_nid]
+                        hmin, hmax = min(hdist), max(hdist)
+                        hvals = np.linspace(hmin, hmax, num_steps)
+                        logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
 
-                    repair_fairness_list = calc_average_causal_effect(
-                        model, repair_loader, sens_idx, target_lid, target_nid, hvals, sens_vals, target_cls
-                    )
-                    fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
-            # ニューロンごとのfl_scoreのプロットを保存
-            plot_fl_score(fl_score, exp_name, k)
-        # ここまでtabularデータ用====================================================
+                        repair_fairness_list = calc_acc_average_causal_effect(
+                            model,
+                            repair_loader,
+                            target_lid=target_lid,
+                            target_nid=target_nid,
+                            hvals=hvals,
+                            acc_org=acc_org,
+                            device=device,
+                        )
+                        fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
+                # ニューロンごとのfl_scoreのプロットを保存
+                plot_fl_score(fl_score, exp_name, k)
+
+            # # (古い方) ここからtabularデータ用====================================================
+            else:
+                raise NotImplementedError("the fairness repair for the tabular dataset is under construction.")
+            #     for target_lid, target_nids_for_layer in zip(target_lids, target_nids):
+            #         # 対象のレイヤに対する各ニューロンの順伝搬の値を計算
+            #         layer_dist = model.get_layer_distribution(repair_ds, target_lid=target_lid)
+
+            #         for target_nid in target_nids_for_layer:
+            #             logger.info(f"target layer={target_lid}, target neuron={target_nid}")
+
+            #             hdist = layer_dist[:, target_nid]
+            #             hmin, hmax = min(hdist), max(hdist)
+            #             hvals = np.linspace(hmin, hmax, num_steps)
+            #             logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
+
+            #             repair_fairness_list = calc_average_causal_effect(
+            #                 model, repair_loader, sens_idx, target_lid, target_nid, hvals, sens_vals, target_cls
+            #             )
+            #             fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
+            #     # ニューロンごとのfl_scoreのプロットを保存
+            #     plot_fl_score(fl_score, exp_name, k)
+            # # ここまでtabularデータ用====================================================
 
         # FL修了時刻 (あくまでfoldごとなので実際はこの時間 * fold数かかる)
         e = time.clock()

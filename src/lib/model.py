@@ -43,20 +43,21 @@ class TabularModel(nn.Module):
             num_params += np.prod(param.shape)
         return {"num_neurons": num_neurons, "num_params": num_params}
 
-    def predict(self, x):
+    def predict(self, x, device="cpu"):
         """バッチの予測を実行"""
+        x = x.to(device)
         out = self.forward(x)
         prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def get_layer_distribution(self, ds, target_lid):
+    def get_layer_distribution(self, data, target_lid):
         """データxを入力した際の指定したレイヤのニューロンの値（活性化関数通す前, 全結合の後）の分布を出力する.
         出力されるndarrayの形状は, (データ数, target_lidのニューロン数)となる.
 
 
         Args:
-            ds (torch.Dataset): 入力データセット.
+            data (torch.Tensor): 入力データ.
             target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed). e.g., 最初の全結合層の出力ニューロンに対しては0. 2番目に対しては1.
 
         Returns:
@@ -64,16 +65,15 @@ class TabularModel(nn.Module):
         """
         # 返したいリスト
         hvals = []
-        for x, _ in ds:
-            o = x
-            # 各レイヤに対して順伝搬
-            for lid, layer in enumerate(self.layers):
-                fc_out = layer[0](o)  # linear
-                o = layer[1](fc_out)  # relu
-                # 指定したレイヤの各ニューロンの値を取り出して次のデータへ
-                if lid == target_lid:
-                    hvals.append(fc_out.tolist())
-                    break
+        o = data
+        # 各レイヤに対して順伝搬
+        for lid, layer in enumerate(self.layers):
+            fc_out = layer[0](o)  # linear
+            o = layer[1](fc_out)  # relu
+            # 指定したレイヤの各ニューロンの値を取り出して次のデータへ
+            if lid == target_lid:
+                hvals.append(fc_out.tolist())
+                break
         return np.array(hvals)
 
     def get_neuron_distribution(self, ds, target_lid, target_nid):
@@ -103,7 +103,7 @@ class TabularModel(nn.Module):
                     break
         return hvals
 
-    def predict_with_intervention(self, x, hval, target_lid=None, target_nid=None):
+    def predict_with_intervention(self, x, hval, target_lid=None, target_nid=None, device="cpu"):
         """指定したニューロンの値に介入した場合 (= あるニューロンの値を固定する) の予測結果を返す.
 
         Args:
@@ -111,6 +111,7 @@ class TabularModel(nn.Module):
             hval (float): 介入後の指定したニューロンの値.
             target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed). e.g., 最初の全結合層の出力ニューロンに対しては0. 2番目に対しては1.
             target_nid (int): 対象となるニューロンのインデックス (0-indexed).
+            device (str): 使用するデバイス. CPUかGPUか.
 
         Returns:
             dict: 予測確率と予測ラベルの辞書.
@@ -122,7 +123,7 @@ class TabularModel(nn.Module):
 
             # 介入したニューロン値に対しては全結合層の後のニューロンを介入後の値で置き換える
             if lid == target_lid:
-                fc_out[0][target_nid] = torch.tensor(hval, dtype=torch.float32)
+                fc_out[0][target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
 
             # 最終層かどうかで場合分け
             if len(layer) == 2:
@@ -135,7 +136,7 @@ class TabularModel(nn.Module):
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, x, hvals, neuron_location):
+    def predict_with_repair(self, x, hvals, neuron_location, device="cpu"):
         """対象のニューロンに摂動を加えた場合 (=パッチの候補を適用した場合) の予測結果を返す.
 
         Args:
@@ -159,7 +160,7 @@ class TabularModel(nn.Module):
             for hval, (target_lid, target_nid) in zip(hvals, neuron_location):
                 if lid == target_lid:
                     # NOTE: 公式実装に準拠 (lib_models.pyのapply_repair_fixed())
-                    fc_out[0][target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32)
+                    fc_out[0][target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
 
             # 最終層かどうかで場合分け
             if len(layer) == 2:
