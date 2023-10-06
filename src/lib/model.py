@@ -130,7 +130,7 @@ class TabularModel(nn.Module):
                 o = fc_out  # 最終層
 
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(o.view(1, -1))  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(o)
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -167,7 +167,7 @@ class TabularModel(nn.Module):
                 o = fc_out  # 最終層
 
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(o.view(1, -1))  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(o)
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -370,7 +370,7 @@ class FashionModel(ImageModel):
         # layer 6
         out = self.dense2(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -398,7 +398,7 @@ class FashionModel(ImageModel):
         # layer 6
         out = self.dense2(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -499,7 +499,7 @@ class GTSRBModel(ImageModel):
         # layer 11
         out = self.dense2(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -536,7 +536,7 @@ class GTSRBModel(ImageModel):
         # layer 11
         out = self.dense2(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -620,7 +620,7 @@ class C10Model(ImageModel):
         # layer 8
         out = self.dense3(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
@@ -651,7 +651,7 @@ class C10Model(ImageModel):
         # layer 8
         out = self.dense3(out)
         # 最終層の出力から予測確率とラベルを取得
-        prob = nn.Softmax(dim=1)(out)  # バッチ次元を追加するため
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 

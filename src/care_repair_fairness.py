@@ -147,8 +147,7 @@ if __name__ == "__main__":
     task_name = train_setting_dict["TASK_NAME"]
 
     # fairnessの計算のための情報をパース
-    # 画像データセットに関してはfairness関連の情報はいらない
-    if dataset_type(task_name) is "tabular":
+    if (dataset_type(task_name) is "tabular") and TABULAR_FAIRNESS_SW:
         sens_name = setting_dict["SENS_NAME"]
         sens_idx = setting_dict["SENS_IDX"]
         sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
