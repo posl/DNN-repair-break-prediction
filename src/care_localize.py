@@ -78,8 +78,7 @@ if __name__ == "__main__":
     task_name = train_setting_dict["TASK_NAME"]
 
     # fairnessの計算のための情報をパース
-    # 画像データセットに関してはfairness関連の情報はいらない
-    if dataset_type(task_name) is "tabular":
+    if (dataset_type(task_name) is "tabular") and TABULAR_FAIRNESS_SW:
         sens_name = setting_dict["SENS_NAME"]
         sens_idx = setting_dict["SENS_IDX"]
         sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
@@ -182,7 +181,7 @@ if __name__ == "__main__":
                     # バッチごとにあるレイヤの出力を取得して最後に全バッチ結合する
                     for batch_idx, (data, labels) in enumerate(repair_loader):
                         data, labels = data.to(device), labels.to(device)
-                        layer_dist_batch = model.get_layer_distribution(data, target_lid=target_lid, device=device)
+                        layer_dist_batch = model.get_layer_distribution(data, target_lid=target_lid)
                         layer_dist.append(layer_dist_batch)
                     layer_dist = np.concatenate(layer_dist, axis=0)
                     logger.info(f"layer_dist.shape={layer_dist.shape}")
@@ -206,8 +205,6 @@ if __name__ == "__main__":
                             device=device,
                         )
                         fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
-                # ニューロンごとのfl_scoreのプロットを保存
-                plot_fl_score(fl_score, exp_name, k)
 
             # # (古い方) ここからtabularデータ用====================================================
             else:

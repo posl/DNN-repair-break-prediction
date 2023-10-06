@@ -72,9 +72,7 @@ class TabularModel(nn.Module):
             o = layer[1](fc_out)  # relu
             # 指定したレイヤの各ニューロンの値を取り出して次のデータへ
             if lid == target_lid:
-                hvals.append(fc_out.tolist())
-                break
-        return np.array(hvals)
+                return fc_out.detach().cpu().numpy()
 
     def get_neuron_distribution(self, ds, target_lid, target_nid):
         """データxを入力した際の指定したニューロンの値（活性化関数通す前, 全結合の後）の分布を出力する.

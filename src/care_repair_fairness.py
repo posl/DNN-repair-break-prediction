@@ -18,6 +18,8 @@ import seaborn as sns
 # plot setting
 sns.set_style("white")
 
+# tabluerデータセットにおいてfairness repairをするかどうか
+TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化するs
 
 # FIXME: 定数外部化
 num_reps = 5
@@ -234,11 +236,8 @@ if __name__ == "__main__":
                 ftol_iter=ftol_iter,
             )
             # arguments of objective function
-            # for tabular dataset
-            # FIXME:以下参照.
-            # ここの分岐をtabludarかどうかではなくfairness repairをするかどうかのフラグで分岐したい.
-            # image datasetに対するfairness repairの場合は例外終了する．
-            if dataset_type(task_name) is "tabular":
+            # whether do fairness repair or not.
+            if TABULAR_FAIRNESS_SW:
                 obj_args = {
                     "model": model,
                     "dataloader": repair_loader,
