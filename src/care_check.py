@@ -271,7 +271,6 @@ if __name__ == "__main__":
                         # # divisionごとのacc, fairを表示
                         # logger.info(f"{div_name}_acc = {div_acc}, {div_name}_fairness = {div_fair}")
 
-            exit()
             # repair適用前後の精度と公平性の差分を取る
             # divisionごとに実行
             for div_name in ["train", "repair", "test"]:
@@ -315,13 +314,7 @@ if __name__ == "__main__":
 
             # 修正前に正解だったかどうかの情報をcareのsample metricsのファイルから得る
             care_dir = exp_dir
-            sample_metrics_path = os.path.join(
-                care_dir,
-                "sample_metrics",
-                log_file_name.replace("fairness", f"repair-check-{sens_name}"),
-                f"{div}_fold{k+1}.csv",
-            )
-            df = pd.read_csv(sample_metrics_path)
+            df = pd.read_csv(sm_path)
             # 修正前の予測結果(0が不正解, 1が正解)
             is_corr_bef = df["sm_corr_bef"].values
             # 修正後の予測成功回数を格納するための配列
