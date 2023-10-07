@@ -374,7 +374,9 @@ class FashionModel(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
+    def predict_with_repair(self, data, hvals, neuron_location=None, device="cpu"):
+        # target_lid固定なので, target_nidのみの列になっていることを確認
+        assert neuron_location.ndim == 1, "neuron_location must be 1-dim."
         # 順伝搬を行う
         out = data
         # layer 0
@@ -503,7 +505,9 @@ class GTSRBModel(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
+    def predict_with_repair(self, data, hvals, neuron_location=None, device="cpu"):
+        # target_lid固定なので, target_nidのみの列になっていることを確認
+        assert neuron_location.ndim == 1, "neuron_location must be 1-dim."
         # 順伝搬を行う
         out = data
         # layer 0
@@ -624,7 +628,9 @@ class C10Model(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
-    def predict_with_repair(self, data, hvals, target_lid=None, neuron_location=None, device="cpu"):
+    def predict_with_repair(self, data, hvals, neuron_location=None, device="cpu"):
+        # target_lid固定なので, target_nidのみの列になっていることを確認
+        assert neuron_location.ndim == 1, "neuron_location must be 1-dim."
         # 順伝搬を行う
         out = data
         # layer 0
@@ -715,7 +721,7 @@ def train_model(model, dataloader, num_epochs):
     return model, epoch_loss_list
 
 
-def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_location=None):
+def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_location=None, device="cpu"):
     """各データに対して, 予測が分類すべきラベルと合っているかどうか (あってたら1, ちがったら0) を表す配列を返す.
 
     Args:
@@ -731,40 +737,34 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
     # 予測結果と真のラベルの配列
     y_true = []
     y_pred = []
-    # GPUが使えるかを確認
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    logger.info(f"device: {device}")
+    # # GPUが使えるかを確認
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # logger.info(f"device: {device}")
     # ネットワークをデバイスへ
-    model.to(device)
+    # model.to(device)
     # モデルを推論モードに
-    model.eval()
+    # model.eval()
     # ネットワークがある程度固定であれば、高速化させる
     torch.backends.cudnn.benchmark = True
 
+    # 最終的に全バッチまとめる
+    y_true, y_pred, correctness_arr = [], [], []
     # データセットの各バッチを予測
-    for x, y in dataloader.dataset:
-        x = x.to(device)
+    for batch_idx, (data, labels) in enumerate(dataloader):
+        data = data.to(device)
         if not is_repair:
-            # 修正前の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            out = model.predict(torch.unsqueeze(x, 0))
+            # 修正前の重みで予測.
+            out = model.predict(data, device=device)
         else:
             # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
             assert (
                 hvals is not None and neuron_location is not None
             ), "despite is_repair=True, hvals and neuron_location are None!!!"
-            # 修正後の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            out = model.predict_with_repair(torch.unsqueeze(x, 0), hvals, neuron_location)
-        prob, pred = out["prob"], out["pred"]
-        y_true.append(y)
-        y_pred.append(pred.item())
-    # HACK: 以下assertionは2値分類のみの場合なのでコメントアウトしました
-    # 二値分類なので0, 1以外の値があったらassertion errorにする
-    # assert (
-    #     np.unique(np.array(y_true)).size == 2
-    # ), f"np.unique(np.array(y_true)).size == {np.unique(np.array(y_true)).size}"
-    # assert (
-    #     np.unique(np.array(y_pred)).size <= 2
-    # ), f"np.unique(np.array(y_pred)).size == {np.unique(np.array(y_pred)).size}"
+            # 修正後の重みで予測.
+            out = model.predict_with_repair(data, hvals, neuron_location=neuron_location, device=device)
+        pred = out["pred"].cpu()
+        y_true.extend(labels.cpu())
+        y_pred.extend(pred)
     # numpy配列にする
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
@@ -772,7 +772,7 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
     return y_true, y_pred, correctness_arr
 
 
-def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=None, num_class=2):
+def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=None, is_binary=True, device="cpu"):
     """モデルの評価用の関数.
 
     Args:
@@ -781,14 +781,14 @@ def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=N
         is_repair (bool): repair後の重みを使って予測するかどうか. ここをTrueにした場合は必ずこの後ろの2つの引数も指定しなければならない.
         hvals (list of float): 修正後のニューロンの値のリスト. indexは第三引数のneuron_locationと対応.
         neuron_location (list of tuple(int, int)): 修正するニューロンの位置(レイヤ番号, ニューロン番号)を表すタプルのリスト.
-        num_class (int): 分類クラス数. 2値分類なら2, 多値分類ならクラス数. メトリクスの取り方を決めるのに必要.
+        is_binary (bool): 2値分類かどうかを表すbool値.
 
     Returns:
         *float: dataloaderでモデルを評価した各種メトリクス.
     """
     # correctnessを評価
-    y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, is_repair, hvals, neuron_location)
-    average = "binary" if num_class == 2 else "macro"
+    y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, is_repair, hvals, neuron_location, device)
+    average = "binary" if is_binary else "macro"
     # 各評価指標を算出
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, average=average)

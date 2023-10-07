@@ -1,4 +1,4 @@
-import os, sys, time
+import os, sys, time, re
 
 from lib.model import select_model
 from lib.util import json2dict, dataset_type
@@ -207,12 +207,14 @@ if __name__ == "__main__":
         # 修正対象のニューロンと疑惑値をログで表示
         logger.info(f"# of repaired neuron = {repair_num}\n{fl_scores[:repair_num]}")
         # 修正対象のニューロンの位置(何層目の,何番目のニューロンか)
-        repaired_positions = fl_scores[:repair_num][:, 0]
+        repaired_positions = fl_scores[:repair_num][:, 0]  # 0列目だけ取るのはFLscoresの部分を捨ててlocationの情報だけ得るため
         # target_lidが固定かどうかチェック
         if "fixed" in repaired_positions[0]:
-            # fixedの部分は-1に変えてから, evalする
-            repaired_positions = np.array([s.replace("fixed", "-1") for s in repaired_positions])
-        repaired_positions = np.array(list(map(eval, repaired_positions)))
+            # target_neuronを示す1次元の配列にする
+            repaired_positions = np.array([int(re.search(r"\d+", entry).group(0)) for entry in repaired_positions])
+        # target_lidの情報も必要な場合
+        else:
+            repaired_positions = np.array(list(map(eval, repaired_positions)))
 
         # ランダム性排除のために適用をリピートする
         time_for_reps = []  # repごとの時間記録用

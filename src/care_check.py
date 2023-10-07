@@ -1,8 +1,8 @@
-import os, sys
+import os, sys, re
 
 sys.path.append(os.pardir)
 from src.lib.model import select_model, eval_model
-from src.lib.util import json2dict
+from src.lib.util import json2dict, dataset_type
 from src.lib.log import set_exp_logging
 from src.lib.fairness import eval_independence_fairness
 import numpy as np
@@ -17,6 +17,9 @@ import seaborn as sns
 
 # plot setting
 sns.set_style("white")
+
+# tabluerデータセットにおいてfairness repairをするかどうか
+TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化するs
 
 # 実験の繰り返し数
 num_reps = 5
@@ -85,9 +88,13 @@ if __name__ == "__main__":
     log_file_name = exp_name.replace("fairness", "repair-check")
     logger = set_exp_logging(exp_dir, exp_name, log_file_name)
 
+    # GPUが使えるか確認
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info(f"device: {device}")
+
     # sample metrics保存用のディレクトリを作成
     sm_dir = os.path.join(exp_dir, "sample_metrics", log_file_name)
-    os.makedirs(sm_dir, exist_ok=True)``
+    os.makedirs(sm_dir, exist_ok=True)
 
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
@@ -115,17 +122,23 @@ if __name__ == "__main__":
     # 訓練時の設定名を取得
     train_setting_name = os.path.splitext(train_setting_path)[0]
 
-    # fairnessの計算のための情報をパース
-    sens_name = setting_dict["SENS_NAME"]
-    sens_idx = setting_dict["SENS_IDX"]
-    sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
-    target_cls = setting_dict["TARGET_CLS"]
-
     # 訓練時の設定も読み込む
     train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
     logger.info(f"TRAIN Settings: {train_setting_dict}")
     num_fold = train_setting_dict["NUM_FOLD"]
     task_name = train_setting_dict["TASK_NAME"]
+
+    # ラベルがバイナリか否か
+    is_binary = False
+    if (dataset_type(task_name) == "tabular") or (dataset_type(task_name) == "text"):
+        is_binary = True
+
+    # fairnessの計算のための情報をパース
+    if (dataset_type(task_name) == "tabular") and TABULAR_FAIRNESS_SW:
+        sens_name = setting_dict["SENS_NAME"]
+        sens_idx = setting_dict["SENS_IDX"]
+        sens_vals = eval(setting_dict["SENS_VALS"])  # ない場合はNone, ある場合は直接listで定義したりrangeで定義できるようにする. そのためにevalを使う
+        target_cls = setting_dict["TARGET_CLS"]
 
     # リペアする割合 (疑惑値の上位何％をrepair対象にするか)
     # repair_ratioの型がintの場合はそれをrepairするニューロン数として（上位何件）解釈し,
@@ -153,17 +166,16 @@ if __name__ == "__main__":
         model = select_model(task_name=task_name)
         model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         model.load_state_dict(torch.load(model_path))
+        model.to(device)
         model.eval()
 
         # train setをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
         train_loader = torch.load(train_data_path)
-        train_ds = train_loader.dataset
 
         # repair setをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
-        repair_ds = repair_loader.dataset
 
         # fl_scoreをロード
         # flscoreに関してはpso関係ないので継承するのであれば継承先のものを使う
@@ -172,16 +184,27 @@ if __name__ == "__main__":
             if not is_inherit
             else f"/src/experiments/care/repair_results/flscore_{inherit_exp_name}_fold{k+1}.npy"
         )
-        flscore = np.load(flscore_path)
-        repair_num = repair_ratio if isinstance(repair_ratio, int) else np.ceil(len(flscore) * repair_ratio).astype(int)
-        flscore_repaired = flscore[:repair_num]
-        repaired_positions = np.array(list(map(eval, flscore_repaired[:, 0])))
+        fl_scores = np.load(flscore_path)
+        repair_num = (
+            repair_ratio if isinstance(repair_ratio, int) else np.ceil(len(fl_scores) * repair_ratio).astype(int)
+        )
+        # 修正対象のニューロンの位置(何層目の,何番目のニューロンか)
+        repaired_positions = fl_scores[:repair_num][:, 0]
+        # target_lidが固定かどうかチェック
+        if "fixed" in repaired_positions[0]:
+            # target_neuronを示す1次元の配列にする
+            repaired_positions = np.array([int(re.search(r"\d+", entry).group(0)) for entry in repaired_positions])
+        # target_lidの情報も必要な場合
+        else:
+            repaired_positions = np.array(list(map(eval, repaired_positions)))
+        logger.info(f"repaired_positions: {repaired_positions}")
 
         # acc_bef, acc_aft = {}, {}
         # fair_bef, fair_aft = {}, {}
         sm_corr_bef, sm_corr_aft = defaultdict(list), defaultdict(list)
         # sm_fair_bef, sm_fair_aft = {}, {}
 
+        # 各repsのpatchを適用していくloop
         for rep in range(num_reps):
             logger.info(f"processing rep {rep}...")
 
@@ -205,6 +228,7 @@ if __name__ == "__main__":
                     for div_name, dataloader in zip(
                         ["train", "repair", "test"], [train_loader, repair_loader, test_loader]
                     ):
+                        logger.info(f"{div_name} set...")
                         # 予測を実行して合ってるかどうか記録
                         ret_dict = eval_model(
                             model=model,
@@ -212,11 +236,14 @@ if __name__ == "__main__":
                             is_repair=is_repair,
                             hvals=hvals,
                             neuron_location=neuron_location,
+                            device=device,
+                            is_binary=is_binary,
                         )
                         # accのみ取り出す
                         # div_acc = ret_dict["metrics"][0]
                         # correctnessのsample metrics
                         sm_corr_list = ret_dict["correctness_arr"]
+                        logger.info(f"{sum(sm_corr_list)}/{len(sm_corr_list)}")
                         if not is_repair:
                             # acc_bef[div_name] = div_acc
                             sm_corr_bef[div_name] = sm_corr_list
@@ -244,6 +271,7 @@ if __name__ == "__main__":
                         # # divisionごとのacc, fairを表示
                         # logger.info(f"{div_name}_acc = {div_acc}, {div_name}_fairness = {div_fair}")
 
+            exit()
             # repair適用前後の精度と公平性の差分を取る
             # divisionごとに実行
             for div_name in ["train", "repair", "test"]:
