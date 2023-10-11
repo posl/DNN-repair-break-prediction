@@ -65,7 +65,7 @@ def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repai
     return result
 
 
-def pso_fitness_acc(particles, model, dataloader, repaired_positions, device):
+def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, device):
     """PSOの目的関数 (for image dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
     公平性でなくaccのみを考慮する.
 
@@ -94,7 +94,7 @@ def pso_fitness_acc(particles, model, dataloader, repaired_positions, device):
         # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
         acc_tmp /= len(dataloader)
         # デフォルトは最小化問題になってるので, 1-accにする
-        cost = 1 - acc_tmp
+        cost = acc_org - acc_tmp
         result.append(cost)
     return result
 
@@ -191,6 +191,18 @@ if __name__ == "__main__":
         # NOTE: repairだけ使うことにしてみる
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
+        repair_ds = repair_loader.dataset
+
+        # 元のmodelのdataloaderに対するaccuracyを計算
+        total_corr = 0  # acc計算用
+        # repair_loaderからバッチを読み込み
+        for batch_idx, (data, labels) in enumerate(repair_loader):
+            data, labels = data.to(device), labels.to(device)
+            org_preds = model.predict(data, device=device)["pred"]
+            num_corr = sum(org_preds == labels)
+            total_corr += num_corr.cpu()
+        acc_org = total_corr / len(repair_ds)
+        logger.info(f"acc_org={acc_org}")
 
         # FLの結果をロードする
         fl_scores_path = (
@@ -256,6 +268,7 @@ if __name__ == "__main__":
                     "dataloader": repair_loader,
                     "repaired_positions": repaired_positions,
                     "device": device,
+                    "acc_org": acc_org,
                 }
                 # Run optimization
                 best_cost, best_pos = optimizer.optimize(pso_fitness_acc, iters=pso_iters, **obj_args)

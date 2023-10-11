@@ -4,6 +4,7 @@ __pycache__/
 data/
 logs/
 # これらをgitにあげたい時は以下をコメントアウトするようにします
+*.csv
 *.pt
 *.h5
 *.pdf

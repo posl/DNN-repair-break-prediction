@@ -322,7 +322,10 @@ if __name__ == "__main__":
 
             # 修正前にあってたかどうかと，5回の修正それぞれの後で正しく予測できた回数の合計をまとめたDataFrameを作成
             df = pd.DataFrame({"sm_corr_bef": is_corr_bef, "sm_corr_aft_sum": is_corr_aft})
+            print(df[df["sm_corr_bef"] == 0]["sm_corr_aft_sum"].value_counts())
+            print(df[df["sm_corr_bef"] == 1]["sm_corr_aft_sum"].value_counts())
             # repaired, brokenの真偽を決定
+            # 厳し目の決定方法
             df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)
             df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)
 
