@@ -83,7 +83,6 @@ def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, d
     result = []
     # 各粒子に対してCAREのPSOの目的関数の値を算出し, resultにappendする
     for p in particles:
-        # TODO: ここをバッチ処理する
         acc_tmp = 0
         for batch_idx, (data, labels) in enumerate(dataloader):
             data = data.to(device)
@@ -145,6 +144,7 @@ if __name__ == "__main__":
     logger.info(f"TRAIN Settings: {train_setting_dict}")
     num_fold = train_setting_dict["NUM_FOLD"]
     task_name = train_setting_dict["TASK_NAME"]
+    batch_size = train_setting_dict["BATCH_SIZE"]
 
     # fairnessの計算のための情報をパース
     if (dataset_type(task_name) is "tabular") and TABULAR_FAIRNESS_SW:
@@ -192,15 +192,25 @@ if __name__ == "__main__":
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
+        # repair前後の予測確認のために用いるshuffleなしのdataloader
+        check_loader = torch.utils.data.DataLoader(
+            dataset=repair_ds, batch_size=batch_size, shuffle=False, num_workers=2
+        )
 
-        # 元のmodelのdataloaderに対するaccuracyを計算
+        # 元のmodelのcheck_loaderに対するaccuracyを計算
         total_corr = 0  # acc計算用
+        org_correctness = []  # 予測の正解確認用
         # repair_loaderからバッチを読み込み
-        for batch_idx, (data, labels) in enumerate(repair_loader):
+        for batch_idx, (data, labels) in enumerate(check_loader):
             data, labels = data.to(device), labels.to(device)
             org_preds = model.predict(data, device=device)["pred"]
-            num_corr = sum(org_preds == labels)
-            total_corr += num_corr.cpu()
+            # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+            org_correctness_tmp = (org_preds.cpu() == labels.cpu()).tolist()
+            # 全体の正解配列に追加
+            org_correctness.extend(org_correctness_tmp)
+            # 正解数
+            total_corr += sum(org_correctness_tmp)
+        # 正解率
         acc_org = total_corr / len(repair_ds)
         logger.info(f"acc_org={acc_org}")
 
@@ -280,6 +290,35 @@ if __name__ == "__main__":
             # log表示
             logger.info(f"[fold: {k}, rep: {rep}] Finish Repairing!\n(best_cost, best_pos):\n{(best_cost, best_pos)}")
             logger.info(f"rep time:{time_for_rep} sec.")
+
+            # best_posがoriginalの予測をどれくらい変更するか？をログ出力
+            aft_correctness = []  # 予測の正解確認用
+            # best_posをhvalsにセットして予測を実行
+            for batch_idx, (data, labels) in enumerate(check_loader):
+                data = data.to(device)
+                ret_dicts = model.predict_with_repair(
+                    data, hvals=best_pos, neuron_location=repaired_positions, device=device
+                )
+                preds = ret_dicts["pred"].cpu()
+                # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+                aft_correctness_tmp = (preds.cpu() == labels.cpu()).tolist()
+                # 全体の正解配列に追加
+                aft_correctness.extend(aft_correctness_tmp)
+            # repaired/brokenの数を数える
+            tt, tf, ft, ff = 0, 0, 0, 0
+            for org, aft in zip(org_correctness, aft_correctness):
+                if org and aft:
+                    tt += 1
+                elif org and not aft:
+                    tf += 1
+                elif not org and aft:
+                    ft += 1
+                else:
+                    ff += 1
+            logger.info(
+                f"num_repaired = {ft} (/{ft+ff} incorrect samples ({100*(ft/(ft+ff)):.3f}%)), num_broken = {tf} (/{tf+tt} correct samples ({100*(tf/(tt+tf)):.3f}%))"
+            )
+
             # PSOの結果得られた修正後のニューロン値を保存
             care_save_path = os.path.join(care_save_dir, f"patch_{exp_name}_fold{k}.npy")
             np.save(care_save_path, best_pos)
