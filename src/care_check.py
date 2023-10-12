@@ -325,9 +325,9 @@ if __name__ == "__main__":
             print(df[df["sm_corr_bef"] == 0]["sm_corr_aft_sum"].value_counts())
             print(df[df["sm_corr_bef"] == 1]["sm_corr_aft_sum"].value_counts())
             # repaired, brokenの真偽を決定
-            # 厳し目の決定方法
-            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)
-            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)
+            # df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)  # 厳し目の決定方法
+            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] >= 1)  # ゆる目の決定方法
+            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)  # 厳し目の決定方法
 
             # exp. metricsもロードしてきて，repaied, brokenなどの列と結合する
             exp_metrics_path = os.path.join(care_dir, "explanatory_metrics", train_setting_name, f"{div}_fold{k+1}.csv")
