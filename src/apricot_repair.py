@@ -46,10 +46,10 @@ if __name__ == "__main__":
 
     # 分類クラス数
     if dataset_type(task_name) == "tabular":
-        num_class = 2
+        is_binary = True
         post_train_epoch = 20
     elif dataset_type(task_name) == "image":
-        num_class = 10
+        is_binary = False
         post_train_epoch = 5
 
     # GPUが使えるかを確認
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         idlm.to(device)
         idlm.eval()
 
-        # foldに対するdataload`erをロード
+        # foldに対するdataloaderをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
         train_loader = torch.load(train_data_path)
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
@@ -78,10 +78,6 @@ if __name__ == "__main__":
 
         # rDLMを作って訓練して保存することを一定数繰り返す(randomnessの排除のため)
         for rep in range(num_reps):
-            # FIXME: 一時的な処置
-            # rep0, 1, 2かつk=0のときはスキップ
-            if rep <= 2 and k == 0:
-                continue
             logger.info(f"starting rep {rep}...")
             rdlm_list = []
             # rDLMの読み込み
@@ -102,7 +98,7 @@ if __name__ == "__main__":
             # actual process
             # ===================================
             logger.info("starting Apricot actual process...")
-            base_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][
+            base_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][
                 0
             ]  # 最後にimprovementを表示したいのでここでbaseのaccを保存しておく
             best_acc = base_acc  # 暫定的なbest_acc
@@ -113,10 +109,11 @@ if __name__ == "__main__":
             # early stoppingのために使用
             last_improvement = 0
 
+            # repsの処理の開始時刻
             s = time.clock()
-            logger.info(f"Start time: {s}")
 
             # train loaderからバッチを取り出して処理を実行
+            num_batch = len(train_loader)
             for b_idx, (x, x_class) in enumerate(train_loader):
                 x, x_class = x.to(device), x_class.to(device)
                 with torch.no_grad():
@@ -166,7 +163,7 @@ if __name__ == "__main__":
                             setWeights(idlm, baseWeights)
 
                 # trainに使ってないデータセットでaccを確認
-                curr_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][0]
 
                 # b_idxのバッチでadjust後にaccが向上した場合
                 if best_acc < curr_acc:
@@ -185,16 +182,17 @@ if __name__ == "__main__":
                     if last_improvement + 100 < b_idx:
                         logger.info("No improvement for too long, terminating")
                         break
-                logger.info(f"batch {b_idx} done, last improvement {b_idx-last_improvement} batches ago.")
+                logger.info(
+                    f"batch {b_idx} (/{num_batch}) done, last improvement {b_idx-last_improvement} batches ago."
+                )
                 # 短いエポックで再度訓練する
                 train_model(idlm, train_loader, num_epochs=post_train_epoch)
                 # 再びaccを確認
-                curr_acc = eval_model(idlm, repair_loader, num_class=num_class)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][0]
                 logger.info(f"new accuracy post training: {curr_acc}")
 
-            # 時間計測
+            # 時間計測 (repごとに計測)
             e = time.clock()
-            logger.info(f"End time: {e}")
             logger.info(f"Total execution time: {e-s}")
             # repair setに対するaccがどれほど伸びたかを出力
             logger.info(f"improvement={best_acc}-{base_acc}={best_acc - base_acc}")
