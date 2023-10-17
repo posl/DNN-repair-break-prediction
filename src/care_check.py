@@ -2,7 +2,7 @@ import os, sys, re
 
 sys.path.append(os.pardir)
 from src.lib.model import select_model, eval_model
-from src.lib.util import json2dict, dataset_type
+from src.lib.util import json2dict, dataset_type, fix_dataloader
 from src.lib.log import set_exp_logging
 from src.lib.fairness import eval_independence_fairness
 import numpy as np
@@ -151,7 +151,7 @@ if __name__ == "__main__":
 
     # test dataloaderをロード (foldに関係ないので先にロードする)
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = torch.load(test_data_path)
+    test_loader = fix_dataloader(torch.load(test_data_path))
 
     # division(train/repair/test), metrics(acc/fairness) => modelの各foldのmetricsのdiffを保存するdefaultdict
     # diff_dict = defaultdict(list)
@@ -171,11 +171,11 @@ if __name__ == "__main__":
 
         # train setをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = torch.load(train_data_path)
+        train_loader = fix_dataloader(torch.load(train_data_path))
 
         # repair setをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        repair_loader = torch.load(repair_data_path)
+        repair_loader = fix_dataloader(torch.load(repair_data_path))
 
         # fl_scoreをロード
         # flscoreに関してはpso関係ないので継承するのであれば継承先のものを使う
@@ -314,6 +314,7 @@ if __name__ == "__main__":
 
             # 修正前に正解だったかどうかの情報をcareのsample metricsのファイルから得る
             care_dir = exp_dir
+            sm_path = os.path.join(sm_dir, f"{div}_fold{k+1}.csv")
             df = pd.read_csv(sm_path)
             # 修正前の予測結果(0が不正解, 1が正解)
             is_corr_bef = df["sm_corr_bef"].values

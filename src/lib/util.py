@@ -32,9 +32,10 @@ def dict2json(dic, save_path):
         json.dump(dic, f, indent=4, separators=(",", ":"))
     logger.info(f"saved to {save_path}")
 
+
 def dataset_type(dataset):
     """datasetの名前から, そのdatasetドメイン(tabular, image, text)を返す.
-    
+
     Args:
         dataset (str): dataset名.
 
@@ -48,3 +49,17 @@ def dataset_type(dataset):
         return "image"
     else:
         raise ValueError(f"dataset {dataset} is not supported.")
+
+
+def fix_dataloader(dataloader):
+    """入力のdataloaderに対し, バッチのランダム性を排除したdataloaderを作成する.
+
+    Args:
+        dataloader (torch.DataLoader): 入力のdataloaderオブジェクト.
+
+    Returns:
+        torch.DataLoader: 入力のdataloaderのバッチの順番を固定したdataloader (実行のたびに同じデータを返す).
+    """
+    return torch.utils.data.DataLoader(
+        dataset=dataloader.dataset, batch_size=dataloader.batch_size, shuffle=False, num_workers=2
+    )

@@ -1,7 +1,7 @@
 import os, sys, time, re
 
 from lib.model import select_model
-from lib.util import json2dict, dataset_type
+from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.log import set_exp_logging
 from lib.fairness import calc_fairness_ub
 import numpy as np
@@ -193,9 +193,7 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
         # repair前後の予測確認のために用いるshuffleなしのdataloader
-        check_loader = torch.utils.data.DataLoader(
-            dataset=repair_ds, batch_size=batch_size, shuffle=False, num_workers=2
-        )
+        check_loader = fix_dataloader(repair_loader)
 
         # 元のmodelのcheck_loaderに対するaccuracyを計算
         total_corr = 0  # acc計算用

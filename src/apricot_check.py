@@ -4,7 +4,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from lib.log import set_exp_logging
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.model import train_model, eval_model, select_model
 from src_apricot.apricot_lib import setWeights
 
@@ -34,13 +34,21 @@ if __name__ == "__main__":
     log_file_name = exp_name.replace("training", "check-apricot")
     logger = set_exp_logging(exp_dir.replace("care", "apricot"), exp_name, log_file_name)
 
+    # GPUが使えるか確認
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info(f"device: {device}")
+
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    sens_name = "age" if task_name == "bank" else "gender"
     num_fold = setting_dict["NUM_FOLD"]
+
+    # ラベルがバイナリか否か
+    is_binary = False
+    if (dataset_type(task_name) == "tabular") or (dataset_type(task_name) == "text"):
+        is_binary = True
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{task_name}/{exp_name}"
@@ -53,16 +61,16 @@ if __name__ == "__main__":
 
     # test loaderのロード
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = torch.load(test_data_path)
+    test_loader = fix_dataloader(torch.load(test_data_path))
 
     df_repair_list, df_break_list = [], []
     # iDLMやdataloaderのロード
     for k in range(num_fold):
         # foldに対するdataloaderをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = torch.load(train_data_path)
+        train_loader = fix_dataloader(torch.load(train_data_path))
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        repair_loader = torch.load(repair_data_path)
+        repair_loader = fix_dataloader(torch.load(repair_data_path))
 
         for div, dataloader in zip(["train", "repair", "test"], [train_loader, repair_loader, test_loader]):
             logger.info(f"processing fold {k} {div} set...")
@@ -71,7 +79,7 @@ if __name__ == "__main__":
             sample_metrics_path = os.path.join(
                 care_dir,
                 "sample_metrics",
-                exp_name.replace("training", f"repair-check-{sens_name}"),
+                exp_name.replace("training", f"repair-check"),
                 f"{div}_fold{k+1}.csv",
             )
             df = pd.read_csv(sample_metrics_path)
@@ -82,18 +90,22 @@ if __name__ == "__main__":
 
             # 修正のnum_reps回の適用結果に関してそれぞれ見ていく
             for rep in range(num_reps):
+                logger.info(f"processing rep {rep}...")
                 weight_save_dir = os.path.join(model_dir, "apricot-weight", f"rep{rep}")
                 weight_save_path = os.path.join(weight_save_dir, f"adjusted_weights_fold-{k}.pt")
                 # モデルの初期化
                 model = select_model(task_name=task_name)
                 # apricot適用後の重みをロード
                 model.load_state_dict(torch.load(weight_save_path))
+                model.to(device)
                 model.eval()
 
                 # 予測を実行して結果を取得
                 ret_dict = eval_model(
                     model=model,
                     dataloader=dataloader,
+                    is_binary=is_binary,
+                    device=device,
                 )
                 is_corr_aft_rep = ret_dict["correctness_arr"]
                 is_corr_aft[:, rep] = is_corr_aft_rep
@@ -102,8 +114,9 @@ if __name__ == "__main__":
             # 修正前にあってたかどうかと，5回の修正それぞれの後で正しく予測できた回数の合計をまとめたDataFrameを作成
             df = pd.DataFrame({"sm_corr_bef": is_corr_bef, "sm_corr_aft_sum": is_corr_aft_sum})
             # repaired, brokenの真偽を決定
-            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)
-            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)
+            # df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)  # 厳し目の決定方法
+            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] >= 1)  # ゆる目の決定方法
+            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)  # 厳し目の決定方法
             logger.info(f"df_sm.shape: {df.shape}")
             df.to_csv(os.path.join(sm_save_dir, f"{div}_fold{k+1}.csv"), index=False)
             logger.info(f'saved to {os.path.join(sm_save_dir, f"{div}_fold{k+1}.csv")}')

@@ -6,7 +6,7 @@ num_rdlms = 20
 
 if __name__ == "__main__":
     dataset = sys.argv[1]
-    isparse = int(sys.argv[2])
+    is_parse_only = int(sys.argv[2])
     num_folds_from_ds = {
         "credit": 5,
         "census": 10,
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     log_file = f"/src/experiments/apricot/logs/{dataset}-apply-apricot-setting1.log"
     parsed_log_file = f"/src/experiments/apricot/logs/{dataset}-apply-apricot-setting1-parsed.log"
 
-    if isparse:
+    if is_parse_only:
         # log_fileを読み込む
         with open(log_file, "r") as f:
             lines = f.readlines()
