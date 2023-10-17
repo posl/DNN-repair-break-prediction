@@ -151,7 +151,7 @@ if __name__ == "__main__":
 
     # test dataloaderをロード (foldに関係ないので先にロードする)
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = fix_dataloader(torch.load(test_data_path))
+    test_loader = torch.load(test_data_path)
 
     # division(train/repair/test), metrics(acc/fairness) => modelの各foldのmetricsのdiffを保存するdefaultdict
     # diff_dict = defaultdict(list)

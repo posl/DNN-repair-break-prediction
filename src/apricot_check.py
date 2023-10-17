@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # test loaderのロード
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = fix_dataloader(torch.load(test_data_path))
+    test_loader = torch.load(test_data_path)
 
     df_repair_list, df_break_list = [], []
     # iDLMやdataloaderのロード
