@@ -14,16 +14,14 @@ def get_df(method, dataset, rb):
     obj_col = "repaired" if rb == "repair" else "broken"
     # 実験のdir名
     exp_dir = f"/src/experiments/{method}"
-    # repair/break datasetのdir名
-    raw_data_dir = os.path.join(exp_dir, "repair_break_dataset", "raw_data")
     # repair/break datasetのファイル名
     if method == "care":
         rb_ds_filename = f"{dataset}-fairness-setting1-{rb}.csv"
     elif method == "apricot" or method == "arachne":
         rb_ds_filename = f"{dataset}-training-setting1-{rb}.csv"
-    rb_ds_path = os.path.join(exp_dir, "repair_break_dataset", "raw_data", rb_ds_filename)
+    target_path = os.path.join(exp_dir, "repair_break_dataset", "raw_data", rb_ds_filename)
     # repair/break datasetのcsvをロード
-    df = pd.read_csv(rb_ds_path)
+    df = pd.read_csv(target_path)
     # 説明変数たち
     exp_cols = [col for col in df.columns if col != obj_col]
     # min-max scalingして返す
