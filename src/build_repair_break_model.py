@@ -1,10 +1,9 @@
-import os, sys
+import os, sys, time
 import pickle
 from collections import defaultdict
 from itertools import product
 import pandas as pd
 import numpy as np
-from lib.util import json2dict
 from lib.log import set_exp_logging
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -111,10 +110,11 @@ def under_sampling(df, target_column, minority=True, sample_size_ratio=1):
     # 多い方の行から，少ない方の数 * sample_size_ratioだけサンプリング
     df_only_majority = df[df[target_column] != minority]
     sample_size = int(sample_size_ratio * minority_cnt)
+    # サンプリング後にシャッフルする
     df_sampled = df_only_majority.sample(n=sample_size, random_state=629)
-    # df_sampledの行をシャッフル
-    df_sampled = df_sampled.sample(frac=1, random_state=629)
-    return pd.concat([df_only_minority, df_sampled])
+    df_concat = pd.concat([df_only_minority, df_sampled])
+    df_concat = df_concat.sample(frac=1, random_state=726)
+    return df_concat
 
 
 # TODO: これらの定数を外部化
@@ -138,12 +138,14 @@ if __name__ == "__main__":
     file_name = os.path.splitext(sys.argv[0])[0]
     # 対象となるデータセット
     dataset = sys.argv[1]
+    # ログファイルの生成
+    logger = set_exp_logging(f"/src/experiments/care", f'{dataset}-{file_name.replace("_", "-")}')
+    # 実行時間
+    time_df = pd.DataFrame(columns=["method", "rb", "fit_or_inf", "lr", "lgb", "rf"])
 
     for method in methods:
         # 実験のディレクトリと実験名を取得
         exp_dir = f"/src/experiments/{method}"
-        # ログファイルの生成
-        logger = set_exp_logging(exp_dir, f'{dataset}-{file_name.replace("_", "-")}')
         save_dir = os.path.join(exp_dir, "repair_break_model")
         os.makedirs(save_dir, exist_ok=True)
 
@@ -151,25 +153,34 @@ if __name__ == "__main__":
             logger.info(f"method = {method}, repair or break = {rb}")
             # 目的変数の列名
             obj_col = "repaired" if rb == "repair" else "broken"
-            sens_name = "age" if dataset == "bank" else "gender"
             # 対象のcsvファイル名
-            file_base_name = (
-                f"{dataset}-training-setting1-{rb}"
-                if method != "care"
-                else f"{dataset}-fairness-{sens_name}-setting1-{rb}"
-            )
-            train_csv_name = f"{file_base_name}-trainval.csv"
-            test_csv_name = f"{file_base_name}-test.csv"
+            if method == "care":
+                train_csv_name = f"{dataset}-fairness-setting1-{rb}-trainval.csv"
+                test_csv_name = f"{dataset}-fairness-setting1-{rb}-test.csv"
+            elif method == "apricot" or method == "arachne":
+                train_csv_name = f"{dataset}-training-setting1-{rb}-trainval.csv"
+                test_csv_name = f"{dataset}-training-setting1-{rb}-test.csv"
             # 必要なデータセットをロードする
             train_ds_dir = os.path.join(exp_dir, "repair_break_dataset/preprocessed_data", train_csv_name)
             test_ds_dir = os.path.join(exp_dir, "repair_break_dataset/preprocessed_data", test_csv_name)
             df_train = pd.read_csv(train_ds_dir)
             df_test = pd.read_csv(test_ds_dir)
+            # 形状の確認
             logger.info(f"df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
-            print(f"df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
-            df_train = under_sampling(df_train, obj_col, True, 1)
+            logger.info(f"col {obj_col} distribution of trainval:\n{df_train[obj_col].value_counts()}")
+            logger.info(f"col {obj_col} distribution of test:\n{df_test[obj_col].value_counts()}")
+
+            # obj_colの値の多数派 (in trainval) がTrueかFalseかを判断する
+            obj_col_cnts = df_train[obj_col].value_counts(ascending=False)
+            majo = obj_col_cnts.index.values[0]  # 多数派
+            mino = not majo  # 少数派
+            mino_cnt = obj_col_cnts[mino]  # 少数派のサンプル数
+            # 少数派がTrueで100件以上あるならサンプリングする
+            if mino and mino_cnt >= 100:
+                # trainの方からアンダーサンプリングする
+                df_train = under_sampling(df=df_train, target_column=obj_col, minority=mino, sample_size_ratio=1)
             logger.info(f"(AFTER USAMP.) df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
-            print(f"(AFTER USAMP.) df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
+            # print(f"(AFTER USAMP.) df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
 
             # 説明変数と目的変数に分割
             X_train, y_train = df_train[exp_metrics], df_train[obj_col]
@@ -191,12 +202,12 @@ if __name__ == "__main__":
             # verboseを事前に設定
             verbose_level = 1
             # 結果保存用のcsvファイル名
-            res_save_base_name = f"{dataset}-{rb}"
-            train_res_filename = res_save_base_name + "-train.csv"
-            test_res_filename = res_save_base_name + "-test.csv"
+            train_res_filename = f"{dataset}-{rb}-train.csv"
+            test_res_filename = f"{dataset}-{rb}-test.csv"
             train_res_save_path = os.path.join(save_dir, train_res_filename)
             test_res_save_path = os.path.join(save_dir, test_res_filename)
             train_res_arr, test_res_arr = [], []
+            fit_time_list, inf_time_list = [], []
 
             # 3種類の分類器をそれぞれcross-validation+grid searchで訓練して結果を表示
             for cname in ["lr", "lgb", "rf"]:
@@ -212,13 +223,26 @@ if __name__ == "__main__":
                     clf, param_grid=parameters_dict[cname], cv=kf, scoring="accuracy", verbose=verbose_level
                 )
                 # 訓練の実行
+                s_fit = time.time()
                 grid.fit(X_train, y_train)
+                time_for_fit = time.time() - s_fit
+                fit_time_list.append(time_for_fit)
+                logger.info(f"FIT TIME: {time_for_fit} sec.")
+
                 # 精度などをログ出力
                 logger.info(f"performance on training set")
+                s_inf1 = time.time()
                 train_res_list = print_perf(grid, X_train, y_train)
+                time_for_inf1 = time.time() - s_inf1
                 train_res_arr.append(train_res_list)
+
                 logger.info(f"performance on test set")
+                s_inf2 = time.time()
                 test_res_list = print_perf(grid, X_test, y_test)
+                time_for_inf2 = time.time() - s_inf2
+                time_for_inf = time_for_inf1 + time_for_inf2
+                inf_time_list.append(time_for_inf)
+                logger.info(f"INF TIME: {time_for_inf} sec.")
                 test_res_arr.append(test_res_list)
 
                 # 対象のpklファイル名
@@ -239,6 +263,15 @@ if __name__ == "__main__":
                 columns=["acc", "precision", "recall", "f1", "roc_auc", "pr_auc"],
                 index=["lr", "lgb", "rf"],
             )
-            train_res_df.to_csv(train_res_save_path, float_format="%.3f")
-            test_res_df.to_csv(test_res_save_path, float_format="%.3f")
-            # np.savetxt(res_save_path, np.array(res_arr), fmt="%.3f", delimiter=",")
+            train_res_df.to_csv(train_res_save_path, float_format="%.3f", index=False)
+            test_res_df.to_csv(test_res_save_path, float_format="%.3f", index=False)
+            # 実行時間df用の行
+            fit_time = [method, rb, "fit", *fit_time_list]
+            inf_time = [method, rb, "inf", *inf_time_list]
+            fit_time_row = pd.Series(fit_time, index=time_df.columns)
+            inf_time_row = pd.Series(inf_time, index=time_df.columns)
+            # dfに行追加
+            time_df = time_df.append(fit_time_row, ignore_index=True)
+            time_df = time_df.append(inf_time_row, ignore_index=True)
+    # 実行時間を保存
+    time_df.to_csv(f"/src/experiments/time_for_repair_break_model-{dataset}.csv", index=False)
