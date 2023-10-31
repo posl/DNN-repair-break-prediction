@@ -4,6 +4,7 @@ from collections import defaultdict
 from itertools import product
 import pandas as pd
 import numpy as np
+from imblearn.over_sampling import SMOTE
 from lib.log import set_exp_logging
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -153,6 +154,8 @@ if __name__ == "__main__":
             logger.info(f"method = {method}, repair or break = {rb}")
             # 目的変数の列名
             obj_col = "repaired" if rb == "repair" else "broken"
+            # モデル作成時の目的関数
+            scoring = "recall" if rb == "break" else "f1"
             # 対象のcsvファイル名
             if method == "care":
                 train_csv_name = f"{dataset}-fairness-setting1-{rb}-trainval.csv"
@@ -175,16 +178,16 @@ if __name__ == "__main__":
             majo = obj_col_cnts.index.values[0]  # 多数派
             mino = not majo  # 少数派
             mino_cnt = obj_col_cnts[mino]  # 少数派のサンプル数
-            # 少数派がTrueで100件以上あるならサンプリングする
-            if mino and mino_cnt >= 100:
-                # trainの方からアンダーサンプリングする
-                df_train = under_sampling(df=df_train, target_column=obj_col, minority=mino, sample_size_ratio=1)
-            logger.info(f"(AFTER USAMP.) df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
-            # print(f"(AFTER USAMP.) df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
-
-            # 説明変数と目的変数に分割
-            X_train, y_train = df_train[exp_metrics], df_train[obj_col]
+            majo_cnt = obj_col_cnts[majo]  # 多数派のサンプル数
+            # 訓練データにおける%repair, %brokenが15%以下or85%以上の場合は不均衡とみなしSMOTEを実行する
+            if mino_cnt <= 0.15 * majo_cnt:
+                sm = SMOTE(sampling_strategy=0.3)  # resampling後の割合(少数派/多数派の値)を指定
+                X_train, y_train = sm.fit_resample(X=df_train[exp_metrics], y=df_train[obj_col])
+            else:
+                X_train, y_train = df_train[exp_metrics], df_train[obj_col]
+            # テストデータをX, yに分割
             X_test, y_test = df_test[exp_metrics], df_test[obj_col]
+            logger.info(f"(AFTER RESAMP.) X_train.shape={X_train.shape}, X_test.shape={X_test.shape}")
             # foldに分割する準備
             kf = KFold(n_splits=num_folds, shuffle=True, random_state=1234)
 
@@ -214,13 +217,13 @@ if __name__ == "__main__":
                 logger.info(f"{rb} model: {cname}")
                 # 分類器の選択
                 if cname == "lr":
-                    clf = LogisticRegression()
+                    clf = LogisticRegression(class_weight="balanced")
                 elif cname == "lgb":
-                    clf = lgb.LGBMClassifier(random_state=1234)
+                    clf = lgb.LGBMClassifier(random_state=1234, class_weight="balanced", objective="binary")
                 elif cname == "rf":
-                    clf = RandomForestClassifier(criterion="entropy", random_state=1234)
+                    clf = RandomForestClassifier(criterion="entropy", random_state=1234, class_weight="balanced")
                 grid = GridSearchCV(
-                    clf, param_grid=parameters_dict[cname], cv=kf, scoring="accuracy", verbose=verbose_level
+                    clf, param_grid=parameters_dict[cname], cv=kf, scoring=scoring, verbose=verbose_level
                 )
                 # 訓練の実行
                 s_fit = time.time()
