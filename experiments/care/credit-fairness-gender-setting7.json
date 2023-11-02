@@ -1,0 +1,6 @@
+{
+  "TRAIN_SETTING_PATH": "credit-training-setting3.json", 
+  "INHERIT_SETTING": "credit-fairness-gender-setting3.json", 
+  "REPAIR_RATIO": 13,
+  "PSO_SETTING_PATH": "pso-setting2.json"
+}

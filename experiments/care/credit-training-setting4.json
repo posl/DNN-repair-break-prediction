@@ -1,0 +1,10 @@
+{
+  "TASK_NAME": "credit",
+  "TRAIN-REPAIR_DATA_PATH": "/src/data/credit/preprocessed_train_repair.csv",
+  "TEST_DATA_PATH": "/src/data/credit/preprocessed_test.csv",
+  "TARGET_COLUMN": "Creditability",
+  "BATCH_SIZE": 16,
+  "NUM_EPOCHS": 100,
+  "TEST_RATIO": 0.2,
+  "NUM_FOLD": 5
+}

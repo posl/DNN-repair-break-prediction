@@ -1,0 +1,8 @@
+{
+  "TASK_NAME": "gtsrb",
+  "TRAIN-REPAIR_DATA_PATH": "/src/data/gtsrb/preprocessed_train_repair.csv",
+  "TEST_DATA_PATH": "/src/data/gtsrb/preprocessed_test.csv",
+  "BATCH_SIZE": 128,
+  "NUM_EPOCHS": 100,
+  "NUM_FOLD": 5
+}

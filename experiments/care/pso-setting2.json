@@ -1,0 +1,10 @@
+{
+  "N_PARTICLES": 20,
+  "FTOL": 1e-3,
+  "FTOL_ITER": 10,
+  "ALPHA": 0.9,
+  "PSO_ITERS": 100,
+  "C1": 0.41,
+  "C2": 0.41,
+  "W": 0.8
+}

@@ -1,0 +1,8 @@
+{
+    "TASK_NAME": "credit",
+    "RAW_DATA_PATH": "/src/data/credit/raw_data.csv",
+    "TRAIN-REPAIR_SAVE_PATH": "/src/data/credit/preprocessed_train_repair.csv",
+    "TEST_SAVE_PATH": "/src/data/credit/preprocessed_test.csv",
+    "TEST_RATIO": 0.1,
+    "RANDOM_SEED": 629
+}

@@ -1,0 +1,9 @@
+{
+  "TASK_NAME": "census",
+  "TRAIN-REPAIR_DATA_PATH": "/src/data/census/preprocessed_train_repair.csv",
+  "TEST_DATA_PATH": "/src/data/census/preprocessed_test.csv",
+  "TARGET_COLUMN": "Income",
+  "BATCH_SIZE": 32,
+  "NUM_EPOCHS": 100,
+  "NUM_FOLD": 10
+}

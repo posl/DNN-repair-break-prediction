@@ -1,0 +1,6 @@
+{
+  "TASK_NAME": "fm",
+  "BATCH_SIZE": 128,
+  "NUM_EPOCHS": 100,
+  "NUM_FOLD": 5
+}

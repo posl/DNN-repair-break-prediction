@@ -1,0 +1,4 @@
+{
+  "INHERIT_SETTING": "credit-fairness-gender-setting1.json", 
+  "PSO_SETTING_PATH": "pso-setting2.json"
+}

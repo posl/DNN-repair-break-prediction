@@ -1,0 +1,8 @@
+{
+    "TRAIN_SETTING_PATH": "gtsrb-training-setting1.json", 
+    "NUM_STEPS": 4,
+    "TARGET_LAYER": "",
+    "TARGET_NEURON": "",
+    "REPAIR_RATIO": 0.2,
+    "PSO_SETTING_PATH": "pso-setting3.json"
+}

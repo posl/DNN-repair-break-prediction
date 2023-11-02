@@ -1,0 +1,8 @@
+{
+    "TASK_NAME": "census",
+    "RAW_DATA_PATH": "/src/data/census/raw_data.csv",
+    "TRAIN-REPAIR_SAVE_PATH": "/src/data/census/preprocessed_train_repair.csv",
+    "TEST_SAVE_PATH": "/src/data/census/preprocessed_test.csv",
+    "TEST_RATIO": 0.3,
+    "RANDOM_SEED": 629
+}
