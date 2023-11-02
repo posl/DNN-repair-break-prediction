@@ -1,4 +1,4 @@
-import os, sys, re
+import os, sys, re, time
 from collections import defaultdict
 from ast import literal_eval
 
@@ -15,7 +15,7 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.layers import Input
 from sklearn.preprocessing import Normalizer
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -69,7 +69,13 @@ if __name__ == "__main__":
 
         # 学習済みモデルをロード (keras)
         model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
-        model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
+        if dataset_type(task_name) == "tabular":
+            loss_fn = "binary_crossentropy"
+        elif dataset_type(task_name) == "image":
+            loss_fn = "categorical_crossentropy"
+        # TODO: for text dataset
+        # elif dataset_type(task_name) == "text":
+        model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
 
         # train set, repair set, test setをロード（最終確認用）
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
@@ -158,6 +164,9 @@ if __name__ == "__main__":
             # differential evolutionによるrepairを適用する #
             ################################################
 
+            # 開始時間計測
+            s = time.clock()
+
             # searcherのinitializerに入れる変数をここで定義 TODO: 外部化
             num_label = len(set(y_for_repair))
             max_search_num = 100
@@ -197,6 +206,10 @@ if __name__ == "__main__":
             save_path = os.path.join(save_dir, file_name)
             # DEによるrepairを実行
             is_corr_dic = searcher.search(places_list, save_path=save_path)
+
+            # 終了時間計測
+            e = time.clock()
+            logger.info(f"Total execution time: {e-s} sec.")
 
             # is_corr_dicの保存先
             check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")

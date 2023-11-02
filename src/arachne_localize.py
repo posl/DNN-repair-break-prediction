@@ -5,14 +5,14 @@ import numpy as np
 import pandas as pd
 from lib.model import get_misclassified_index, sort_keys_by_cnt
 import tensorflow as tf
-from tensorflow import keras 
+from tensorflow import keras
 import keras.backend as K
 
 
 from keras.models import load_model, Model
 from keras.layers import Input
 from sklearn.preprocessing import Normalizer
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -357,7 +357,7 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    target_column = setting_dict["TARGET_COLUMN"]
+    # target_column = setting_dict["TARGET_COLUMN"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # モデルとデータの読み込み先のディレクトリ
@@ -377,14 +377,19 @@ if __name__ == "__main__":
         # repair loaderをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
-        repair_ds = repair_loader.dataset
+        repair_ds = repair_loader.dataset  # HACK: これはメモリ食うのでなんとかしたい（バッチ対応？）
         X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
         logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
 
         # 学習済みモデルをロード (keras)
         model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
-        # TODO: lossを多クラス用にも対応できるようif文などでなんとかする
-        model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
+        if dataset_type(task_name) == "tabular":
+            loss_fn = "binary_crossentropy"
+        elif dataset_type(task_name) == "image":
+            loss_fn = "categorical_crossentropy"
+        # TODO: for text dataset
+        # elif dataset_type(task_name) == "text":
+        model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
         # 予測のスコアとそこから予測ラベル取得
         pred_scores = model.predict(X_repair, verbose=-1)
         pred_labels = np.argmax(pred_scores, axis=1)
@@ -490,7 +495,7 @@ if __name__ == "__main__":
 
             # 開始時間計測
             s = time.clock()
-            logger.info(f"Start time: {s}")
+            # logger.info(f"Start time: {s}")
             # localizationを実行
             indices_to_places_to_fix, front_lst = run_arachne_localize(
                 X_for_loc, y_for_loc, target_indices_wrong, sampled_indices_correct, target_weight, model
@@ -498,8 +503,8 @@ if __name__ == "__main__":
             logger.info(f"Places to fix {indices_to_places_to_fix}")
             # 終了時間計測
             e = time.clock()
-            logger.info(f"End time: {e}")
-            logger.info(f"Total execution time: {e-s}")
+            # logger.info(f"End time: {e}")
+            logger.info(f"Total execution time: {e-s} sec.")
 
             # 修正すべき位置の保存用のdfを作成
             output_df = pd.DataFrame(

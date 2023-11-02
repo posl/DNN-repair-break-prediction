@@ -315,7 +315,7 @@ class DE_searcher(Searcher):
             curr_time = time.time()
             local_run_time = curr_time - iter_start_time
             run_time = curr_time - search_start_time
-            logger.info("Time for a single iter: {}, ({})".format(run_time, local_run_time))
+            # logger.info("Time for a single iter: {}, ({})".format(run_time, local_run_time))
 
         # with these two cases, the new model has not been saved
         # if self.empty_graph is not None:
