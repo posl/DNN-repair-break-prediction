@@ -1,3 +1,5 @@
+from tqdm import tqdm
+
 import tensorflow.compat.v1 as tf
 
 tf.disable_v2_behavior()
@@ -82,7 +84,7 @@ def generate_base_mdl(mdl, X, indices_to_tls=None, batch_size=None, act_func=Non
         num = len(X)
         chunks = return_chunks(num, batch_size=batch_size)
         k_fn_mdl_lst = []
-        for chunk in chunks:
+        for chunk in tqdm(chunks, desc="chunk progress"):
             k_fn_mdl, _, _ = build_k_frame_model(mdl, X[chunk], indices_to_tls, act_func=act_func)
             k_fn_mdl_lst.append(k_fn_mdl)
         # print(f"len(chunks), len(k_fn_mdl_lst) : {len(chunks)}, {len(k_fn_mdl_lst)}")

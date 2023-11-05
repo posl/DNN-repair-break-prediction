@@ -91,6 +91,7 @@ class Searcher(object):
         self.act_func = act_func  # will be latter used for GTSRB
         self.is_multi_label = is_multi_label
 
+        logger.info("setting base model...")
         if not self.lstm_mdl:
             self.set_base_model_v1()
         else:
@@ -99,6 +100,7 @@ class Searcher(object):
 
         # initialise the names of the tensors used in Searcher
         if initial_predictions is None:
+            logger.info("setting initial predictions...")
             self.set_initial_predictions()  # initial_predictions)
         else:
             self.initial_predictions = initial_predictions
@@ -119,6 +121,10 @@ class Searcher(object):
         # print("Number of layers in model: {}".format(len(self.mdl.layers)))
 
         # ここでデータをバッチに分けて予測するためのモデル（keras function）を作ってる
+        # HACK: HACK: HACK: ここが実行時間のボトルネックっぽいわ
+        # X_for_repair
+        logger.info("setting base models for X_for_repair...")
+        print("setting base models for X_for_repair...")
         self.fn_mdl_lst = self.kfunc_util.generate_base_mdl(
             self.mdl,
             self.inputs,
@@ -127,6 +133,8 @@ class Searcher(object):
             act_func=self.act_func,
         )
 
+        logger.info("setting base models for X_train...")
+        print("setting base models for X_train...")
         self.fn_mdl_lst_train = self.kfunc_util.generate_base_mdl(
             self.mdl,
             self.X_train,
@@ -135,6 +143,8 @@ class Searcher(object):
             act_func=self.act_func,
         )
 
+        logger.info("setting base models for X_repair..")
+        print("setting base models for X_repair..")
         self.fn_mdl_lst_repair = self.kfunc_util.generate_base_mdl(
             self.mdl,
             self.X_repair,
@@ -143,6 +153,8 @@ class Searcher(object):
             act_func=self.act_func,
         )
 
+        logger.info("setting base models for X_test..")
+        print("setting base models for X_test..")
         self.fn_mdl_lst_test = self.kfunc_util.generate_base_mdl(
             self.mdl,
             self.X_test,
@@ -238,7 +250,7 @@ class Searcher(object):
         """ """
         if self.mdl is None:
             self.set_base_model()
-        self.initial_predictions = self.mdl.predict(self.inputs)
+        self.initial_predictions = self.mdl.predict(self.inputs, verbose=1)
 
     # 別のところで同じ関数名が定義されておりそちらが使用されている. ややこしい.
     # def get_results_of_target(self, indices_to_target):
