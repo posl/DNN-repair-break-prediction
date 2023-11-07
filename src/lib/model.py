@@ -315,6 +315,26 @@ class FashionModel(ImageModel):
         out = self.dense2(out)
         return out
 
+    def forward_with_layer_output(self, x):
+        layer_outputs = [x]
+        out = F.relu(self.conv1(x))
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = F.relu(self.conv2(out))
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = out.view(out.size(0), -1)
+        layer_outputs.append(out)
+        out = F.relu(self.dense1(out))
+        layer_outputs.append(out)
+        out = self.dropout(out)
+        layer_outputs.append(out)
+        out = self.dense2(out)
+        layer_outputs.append(out)
+        return out, layer_outputs
+
     def get_layer_distribution(self, data, target_lid=None, device="cpu"):
         """データdataを入力した際の, 指定したレイヤのニューロンの値（活性化関数通す前, i.e., 全結合の後）の分布を出力する.
         出力されるndarrayの形状は, (データ数, target_lidのニューロン数)となる.
@@ -424,7 +444,7 @@ class GTSRBModel(ImageModel):
     def forward(self, x):
         out = F.relu(self.conv1(x))
         out = self.batch_normalization1(out)
-        out = F.max_pool2d(out, 2)
+        out =    F.max_pool2d(out, 2)
         out = F.relu(self.conv2(out))
         out = self.batch_normalization2(out)
         out = F.max_pool2d(out, 2)
@@ -437,6 +457,36 @@ class GTSRBModel(ImageModel):
         # out = F.softmax(self.dense2(out), dim=1) #元々の実装ではここだけsoftmaxとられており統一性がない
         out = self.dense2(out)
         return out
+
+    def forward_with_layer_output(self, x):
+        layer_outputs = [x]
+        out = F.relu(self.conv1(x))
+        layer_outputs.append(out)
+        out = self.batch_normalization1(out)
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = F.relu(self.conv2(out))
+        layer_outputs.append(out)
+        out = self.batch_normalization2(out)
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = F.relu(self.conv3(out))
+        layer_outputs.append(out)
+        out = self.batch_normalization3(out)
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = out.view(out.size(0), -1)
+        layer_outputs.append(out)
+        out = F.relu(self.dense1(out))
+        layer_outputs.append(out)
+        out = self.batch_normalization4(out)
+        layer_outputs.append(out)
+        out = self.dense2(out)
+        layer_outputs.append(out)
+        return out, layer_outputs
 
     def get_layer_distribution(self, data, target_lid=None, device="cpu"):
         # 順伝搬を所望のレイヤまで行う
@@ -550,7 +600,7 @@ class C10Model(ImageModel):
 
     def __init__(self):
         super().__init__()
-        self.input_dim = (3, 28, 28)
+        self.input_dim = (3, 32, 32)
         self.conv1 = nn.Conv2d(3, 64, 3, padding=1)
         self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
@@ -571,6 +621,30 @@ class C10Model(ImageModel):
         out = F.relu(self.dense2(out))
         out = self.dense3(out)
         return out
+
+    def forward_with_layer_output(self, x):
+        layer_outputs = [x]
+        out = F.relu(self.conv1(x))
+        layer_outputs.append(out)
+        out = F.relu(self.conv2(out))
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = F.relu(self.conv3(out))
+        layer_outputs.append(out)
+        out = F.relu(self.conv4(out))
+        layer_outputs.append(out)
+        out = F.max_pool2d(out, 2)
+        layer_outputs.append(out)
+        out = out.view(out.size(0), -1)
+        layer_outputs.append(out)
+        out = F.relu(self.dense1(out))
+        layer_outputs.append(out)
+        out = F.relu(self.dense2(out))
+        layer_outputs.append(out)
+        out = self.dense3(out)
+        layer_outputs.append(out)
+        return out, layer_outputs
 
     def get_layer_distribution(self, data, target_lid=None, device="cpu"):
         # 順伝搬を所望のレイヤまで行う

@@ -377,7 +377,7 @@ if __name__ == "__main__":
         # repair loaderをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
-        repair_ds = repair_loader.dataset  # HACK: これはメモリ食うのでなんとかしたい（バッチ対応？）
+        repair_ds = repair_loader.dataset  # HACK: これはメモリ食うのでなんとかした方がいいかも. 画像データでも問題なければそのままで.
         X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
         logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
 
