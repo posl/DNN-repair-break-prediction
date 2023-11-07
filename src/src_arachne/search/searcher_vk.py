@@ -122,6 +122,8 @@ class Searcher(object):
 
         # ここでデータをバッチに分けて予測するためのモデル（keras function）を作ってる
         # HACK: HACK: HACK: ここが実行時間のボトルネックっぽいわ
+        # X_for_repair以外はfoldが一緒なら全く一緒．なので，foldごとに一回だけ作ればいいはず．
+        # 初期値を渡せるようにして，初期値がNoneの場合のみ以下の処理をするようにする
         # X_for_repair
         logger.info("setting base models for X_for_repair...")
         print("setting base models for X_for_repair...")

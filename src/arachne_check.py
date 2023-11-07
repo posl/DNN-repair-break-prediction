@@ -12,18 +12,11 @@ TODO
 
 import os, sys, re
 from collections import defaultdict
-from ast import literal_eval
 
 import numpy as np
 import pandas as pd
 
-# import tensorflow as tf
-import tensorflow.compat.v1 as tf
-
-tf.disable_v2_behavior()
-import tensorflow.keras.backend as K
-
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -45,12 +38,6 @@ if __name__ == "__main__":
     exp_dir = os.path.dirname(sys.argv[1])
     arachne_dir = exp_dir.replace("care", "arachne")
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
-    # sample metrics (arachne) の保存用ディレクトリ
-    sm_save_dir = os.path.join(arachne_dir, "sample_metrics", exp_name)
-    os.makedirs(sm_save_dir, exist_ok=True)
-    # repair_break dataset (arachne, raw_data) の保存用ディレクトリ
-    rb_ds_save_dir = os.path.join(arachne_dir, "repair_break_dataset", "raw_data")
-    os.makedirs(rb_ds_save_dir, exist_ok=True)
 
     # log setting
     log_file_name = exp_name.replace("training", "arachne-check")
@@ -61,13 +48,18 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    sens_name = "age" if task_name == "bank" else "gender"
-    target_column = setting_dict["TARGET_COLUMN"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{task_name}/{exp_name}"
     model_dir = f"/src/models/{task_name}/{exp_name}"
+
+    # sample metrics (arachne) の保存用ディレクトリ
+    sm_save_dir = os.path.join(arachne_dir, "sample_metrics", exp_name)
+    os.makedirs(sm_save_dir, exist_ok=True)
+    # repair_break dataset (arachne, raw_data) の保存用ディレクトリ
+    rb_ds_save_dir = os.path.join(arachne_dir, "repair_break_dataset", "raw_data")
+    os.makedirs(rb_ds_save_dir, exist_ok=True)
 
     # 対象とする誤分類の発生頻度の順位 (0は1位, 1は2位, ...)
     topn = 0
@@ -83,7 +75,7 @@ if __name__ == "__main__":
             sample_metrics_path = os.path.join(
                 care_dir,
                 "sample_metrics",
-                exp_name.replace("training", f"repair-check-{sens_name}"),
+                exp_name.replace("training", f"repair-check"),
                 f"{div}_fold{k+1}.csv",
             )
             df = pd.read_csv(sample_metrics_path)
@@ -105,13 +97,14 @@ if __name__ == "__main__":
             # 修正前にあってたかどうかと，5回の修正それぞれの後で正しく予測できた回数の合計をまとめたDataFrameを作成
             df = pd.DataFrame({"sm_corr_bef": is_corr_bef, "sm_corr_aft_sum": is_corr_aft_sum})
             # repaired, brokenの真偽を決定
-            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)
-            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)
+            # df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)  # 厳し目の決定方法
+            df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] >= 1)  # ゆる目の決定方法
+            df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)  # 厳し目の決定方法
             logger.info(f"df_sm.shape: {df.shape}")
             df.to_csv(os.path.join(sm_save_dir, f"{div}_fold{k+1}.csv"), index=False)
             logger.info(f'saved to {os.path.join(sm_save_dir, f"{div}_fold{k+1}.csv")}')
 
-            # exp. metricsもロードしてきて，repaied, brokenなどの列と結合する
+            # exp. metricsもロードしてきて，repaired, brokenなどの列と結合する
             exp_metrics_path = os.path.join(care_dir, "explanatory_metrics", exp_name, f"{div}_fold{k+1}.csv")
             df_expmet = pd.read_csv(exp_metrics_path)
             df_all = pd.concat([df_expmet, df], axis=1)
