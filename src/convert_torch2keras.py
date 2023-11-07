@@ -159,6 +159,8 @@ if __name__ == "__main__":
             keras_out = keras_model(dummy_in.detach().numpy().transpose(0, 2, 3, 1), training=False)
         else:
             keras_out = keras_model(dummy_in.detach().numpy(), training=False)
+        # print(np.argmax(torch_out, axis=1))
+        # print(np.argmax(keras_out, axis=1))
         # torch_outとkeras_outのL1ノルムを計算
         logger.info(f"L1 norm of torch_out and keras_out: {np.linalg.norm(torch_out - keras_out, ord=1)}")
         if stdout:
@@ -314,22 +316,28 @@ if __name__ == "__main__":
                 out = dummy_in.detach().numpy().transpose(0, 2, 3, 1)
                 for l in keras_model.layers:
                     # dummy_inを入力としてlの出力を計算
-                    out = l(out, training=False)
+                    out = l(out)
                     if not l.name.startswith("permute"):
                         keras_out.append(out)
                 # torch_modelとkeras_modelそれぞれの出力を比較する
-                for i, (ko, to) in enumerate(zip(keras_out, torch_out)):
+                for i, (ko, to, kl) in enumerate(zip(keras_out, torch_out, keras_model.layers)):
                     to = to.detach().numpy()
-                    print(f"layer {i}", ko.shape, to.shape)
+                    print(f"layer {i}", kl.name, ko.shape, to.shape)
                     if len(to.shape) == 4:
                         to = to.transpose(0, 2, 3, 1)  # channel first -> channel last
                     assert ko.shape == to.shape
+                    # # toとkoの差の絶対値を計算する
+                    # diff = np.abs(ko - to)
+                    # # diffの大きい方から上位100件の値とインデックスを表示
+                    # print(np.sort(np.array(ko).flatten())[::-1][:100])
+                    # print(np.sort(to.flatten())[::-1][:100])
+                    # print(np.sort(diff.flatten())[::-1][:100])
+                    # XXX: XXX: XXX: batchnormの出力が合わない;o; 数値計算の誤差か.
                     print(f"sum of abs. of diff. of torch and keras layer outs: {np.sum(np.abs(ko - to))}")
                 # 確認用終了============================================
 
                 # ダミー入力に対する両モデルの出力の一致性を確認
                 check_output_for_dummy(torch_model, keras_model, stdout=True)
-                break
 
                 # keras_modelを保存
                 save_dir = os.path.dirname(dic[ds]["model_path_format"])
