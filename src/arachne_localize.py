@@ -1,10 +1,14 @@
 import os, sys, re, time
 from collections import defaultdict
+from collections.abc import Iterable
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
 from lib.model import get_misclassified_index, sort_keys_by_cnt
-import tensorflow as tf
+
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from tensorflow import keras
 import keras.backend as K
 
@@ -12,8 +16,9 @@ import keras.backend as K
 from keras.models import load_model, Model
 from keras.layers import Input
 from sklearn.preprocessing import Normalizer
-from lib.util import json2dict, dataset_type
+from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.log import set_exp_logging
+from src_arachne.utils import model_util as model_utils
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -47,7 +52,7 @@ def get_target_weights(model):
     target_weights = {}  # key = layer index (int), value: [weight value, layer name]
 
     for i, layer in enumerate(model.layers):
-        # 各レイヤが対象となるレイヤ名のパターンにマッチするかを判定
+        # 各レイヤが対象となるレイヤ名のパターンにマッチするかを判定P
         if is_target(layer.__class__.__name__, targeting_clsname_pattns):
             # NOTE: Denseの場合は重みとバイアスのペアで返ってくる
             weights = layer.get_weights()
@@ -161,19 +166,19 @@ def compute_gradient_to_loss(model, idx_to_target_layer, X, y, loss_func_name, b
         chunks = [np.arange(num)]
 
     # loss_funcの設定
-    if loss_func_name == "categorical_cross_entropy":
+    if loss_func_name == "categorical_crossentropy":
         loss_func = tf.nn.softmax_cross_entropy_with_logits_v2
     elif loss_func_name == "binary_crossentropy":
         if "name" in kwargs.keys():
             kwargs.pop("name")
         loss_func = tf.keras.losses.binary_crossentropy
-        y = y.reshape(-1, 1)
     elif loss_func_name in ["mean_squared_error", "mse"]:
         loss_func = tf.keras.losses.MeanSquaredError
     else:
-        print(loss_func)
-        print("{} not supported yet".format(loss_func))
+        print("{} not supported yet".format(loss_func_name))
         assert False
+    # lossの計算でこのshapeにしないとエラーになるのでreshape
+    y = y.reshape(-1, 1)
 
     gradients = [[] for _ in range(len(targets))]
     for chunk in chunks:
@@ -229,65 +234,205 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
     for idx_to_tl, vs in target_weights.items():
         logger.info(f"idx_to_tl = {idx_to_tl}")
         t_w, lname = vs
+        layer_config = model.layers[idx_to_tl].get_config()
+        if idx_to_tl == 0:
+            # meaning the model doesn't specify the input layer explicitly
+            prev_output = target_X
+        else:
+            prev_output = model.layers[idx_to_tl - 1].output
 
         # FC層の場合
-        ############ FI begin #########
-        # 対象レイヤが0, 1層目の場合
-        if idx_to_tl == 0 or idx_to_tl == 1:
-            prev_output = target_X
-        # 対象レイヤが2層目以降の場合
-        else:
-            # 対象レイヤまでの中間層を出力するモデルを作成して出力を得る
-            t_model = Model(inputs=model.input, outputs=model.layers[idx_to_tl - 1].output)
-            prev_output = t_model.predict(target_X, verbose=-1)
-        layer_config = model.layers[idx_to_tl].get_config()
-        logger.info(f"t_w.shape = {t_w.shape}")
-        logger.info(f"prev_output.shape = {prev_output.shape}")
+        if model_utils.is_FC(lname):
+            ############ FI begin #########
+            # 対象レイヤが0, 1層目の場合
+            if idx_to_tl == 0 or idx_to_tl == 1:
+                prev_output = target_X
+            # 対象レイヤが2層目以降の場合
+            else:
+                # 対象レイヤまでの中間層を出力するモデルを作成して出力を得る
+                t_model = Model(inputs=model.input, outputs=model.layers[idx_to_tl - 1].output)
+                prev_output = t_model.predict(target_X, verbose=-1)
+            logger.info(f"t_w.shape = {t_w.shape}")
+            logger.info(f"prev_output.shape = {prev_output.shape}")
 
-        from_front = []
-        for idx in range(t_w.shape[-1]):
-            assert int(prev_output.shape[-1]) == t_w.shape[0], "{} vs {}".format(
-                int(prev_output.shape[-1]), t_w.shape[0]
-            )
-            output = np.multiply(prev_output, t_w[:, idx])  # -> shape = prev_output.shape
-            output = np.abs(output)
-            output = norm_scaler.fit_transform(output)
-            output = np.mean(output, axis=0)
-            from_front.append(output)
+            from_front = []
+            for idx in range(t_w.shape[-1]):
+                assert int(prev_output.shape[-1]) == t_w.shape[0], "{} vs {}".format(
+                    int(prev_output.shape[-1]), t_w.shape[0]
+                )
+                output = np.multiply(prev_output, t_w[:, idx])  # -> shape = prev_output.shape
+                output = np.abs(output)
+                output = norm_scaler.fit_transform(output)
+                output = np.mean(output, axis=0)
+                from_front.append(output)
 
-        # from_frontは前のレイヤとの影響度
-        from_front = np.asarray(from_front)
-        from_front = from_front.T  # ow/sum(ow)の計算
-        logger.info(f"from_front.shape = {from_front.shape}")  # t_w (target weight)と同じshapeになる
+            # from_frontは前のレイヤとの影響度
+            from_front = np.asarray(from_front)
+            from_front = from_front.T  # ow/sum(ow)の計算
+            logger.info(f"from_front.shape = {from_front.shape}")  # t_w (target weight)と同じshapeになる
 
-        # from_behindは後続のレイヤに関する勾配
-        from_behind = compute_gradient_to_output(model, idx_to_tl, target_X)  # \partial O / \partial oの計算
-        logger.info(f"from_behind.shape = {from_behind.shape}")
-        # Forward Impactの計算
-        FIs = from_front * from_behind
-        logger.info(f"FIs.shape = {FIs.shape}")
-        ############ FI end #########
+            # from_behindは後続のレイヤに関する勾配
+            from_behind = compute_gradient_to_output(model, idx_to_tl, target_X)  # \partial O / \partial oの計算
+            logger.info(f"from_behind.shape = {from_behind.shape}")
+            # Forward Impactの計算
+            FIs = from_front * from_behind
+            logger.info(f"FIs.shape = {FIs.shape}")
+            ############ FI end #########
 
-        ############ GL begin #######
-        grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
-        logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
-        ############ GL end #########
+            ############ GL begin #######
+            grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
+            logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
+            ############ GL end #########
 
         # TODO: Conv2D層の場合
+        elif model_utils.is_C2D(lname):
+            ############ FI begin #########
+            is_channel_first = layer_config["data_format"] == "channels_first"
+            # 修正に使うデータを対象レイヤまで順伝搬した出力を得る
+            if idx_to_tl == 0 or idx_to_tl - 1 == 0:
+                prev_output_v = target_X
+            else:
+                t_model = Model(inputs=model.input, outputs=model.layers[idx_to_tl - 1].output)
+                prev_output_v = t_model.predict(target_X)
+            tr_prev_output_v = np.moveaxis(prev_output_v, [1, 2, 3], [3, 1, 2]) if is_channel_first else prev_output_v
+            logger.info(f"t_w.shape = {t_w.shape}")
+            logger.info(f"prev_output.shape = {prev_output.shape}")
+
+            # Conv2Dのハイパラを取得
+            kernel_shape = t_w.shape[:2]
+            strides = layer_config["strides"]
+            padding_type = layer_config["padding"]
+            # paddingの具体的な値を取得
+            if padding_type == "valid":
+                paddings = [0, 0]
+            else:
+                if padding_type == "same":
+                    # P = ((S-1)*W-S+F)/2
+                    true_ws_shape = [
+                        t_w.shape[0],
+                        t_w.shape[-1],
+                    ]  # Channel_in, Channel_out
+                    paddings = [
+                        int(((strides[i] - 1) * true_ws_shape[i] - strides[i] + kernel_shape[i]) / 2) for i in range(2)
+                    ]
+                elif not isinstance(padding_type, str) and isinstance(
+                    padding_type, Iterable
+                ):  # explicit paddings given
+                    paddings = list(padding_type)
+                    if len(paddings) == 1:
+                        paddings = [paddings[0], paddings[0]]
+                else:
+                    print("padding type: {} not supported".format(padding_type))
+                    paddings = [0, 0]
+                    assert False
+
+                # add padding
+                if is_channel_first:
+                    paddings_per_axis = [
+                        [0, 0],
+                        [0, 0],
+                        [paddings[0], paddings[0]],
+                        [paddings[1], paddings[1]],
+                    ]
+                else:
+                    paddings_per_axis = [
+                        [0, 0],
+                        [paddings[0], paddings[0]],
+                        [paddings[1], paddings[1]],
+                        [0, 0],
+                    ]
+
+                tr_prev_output_v = np.pad(
+                    tr_prev_output_v,
+                    paddings_per_axis,
+                    mode="constant",
+                    constant_values=0,
+                )  # zero-padding
+
+            if is_channel_first:
+                num_kernels = int(prev_output.shape[1])  # Channel_in
+            else:  # channels_last
+                assert layer_config["data_format"] == "channels_last", layer_config["data_format"]
+                num_kernels = int(prev_output.shape[-1])  # Channel_in
+            assert num_kernels == t_w.shape[2], "{} vs {}".format(num_kernels, t_w.shape[2])
+
+            # H x W
+            if is_channel_first:
+                # the last two (front two are # of inputs and # of kernels (Channel_in))
+                input_shape = [int(v) for v in prev_output.shape[2:]]
+            else:
+                input_shape = [int(v) for v in prev_output.shape[1:-1]]
+            # (W1−F+2P)/S+1, W1 = input volumne , F = kernel, P = padding
+            n_mv_0 = int((input_shape[0] - kernel_shape[0] + 2 * paddings[0]) / strides[0] + 1)  # H_out
+            n_mv_1 = int((input_shape[1] - kernel_shape[1] + 2 * paddings[1]) / strides[1] + 1)  # W_out
+
+            n_output_channel = t_w.shape[-1]  # Channel_out
+            from_front = []
+            # move axis for easier computation
+            for idx_ol in tqdm(range(n_output_channel)):  # t_w.shape[-1]
+                for i in range(n_mv_0):  # H
+                    for j in range(n_mv_1):  # W
+                        curr_prev_output_slice = tr_prev_output_v[
+                            :, i * strides[0] : i * strides[0] + kernel_shape[0], :, :
+                        ]
+                        curr_prev_output_slice = curr_prev_output_slice[
+                            :, :, j * strides[1] : j * strides[1] + kernel_shape[1], :
+                        ]
+                        output = curr_prev_output_slice * t_w[:, :, :, idx_ol]
+                        sum_output = np.sum(np.abs(output))
+                        output = output / sum_output
+                        sum_output = np.nan_to_num(output, posinf=0.0)
+                        output = np.mean(output, axis=0)
+                        from_front.append(output)
+
+            from_front = np.asarray(from_front)
+            # from_front.shape: [Channel_out * n_mv_0 * n_mv_1, F1, F2, Channel_in]
+            if is_channel_first:
+                from_front = from_front.reshape(
+                    (n_output_channel, n_mv_0, n_mv_1, kernel_shape[0], kernel_shape[1], int(prev_output.shape[1]))
+                )
+            else:  # channels_last
+                from_front = from_front.reshape(
+                    (n_mv_0, n_mv_1, n_output_channel, kernel_shape[0], kernel_shape[1], int(prev_output.shape[-1]))
+                )
+
+            # [F1,F2,Channel_in, Channel_out, n_mv_0, n_mv_1]
+            # 	or [F1,F2,Channel_in, n_mv_0, n_mv_1,Channel_out]
+            from_front = np.moveaxis(from_front, [0, 1, 2], [3, 4, 5])
+            logger.info(f"from_front.shape = {from_front.shape}")
+            # [Channel_out, H_out(n_mv_0), W_out(n_mv_1)]
+            from_behind = compute_gradient_to_output(model, idx_to_tl, target_X, by_batch=True)
+            logger.info(f"from_behind.shape = {from_behind.shape}")
+            # [F1,F2,Channel_in, Channel_out, n_mv_0, n_mv_1] (channels_firs)
+            # or [F1,F2,Channel_in,n_mv_0, n_mv_1,Channel_out] (channels_last)
+            FIs = from_front * from_behind
+            if is_channel_first:
+                FIs = np.sum(np.sum(FIs, axis=-1), axis=-1)  # [F1, F2, Channel_in, Channel_out]
+            else:
+                FIs = np.sum(np.sum(FIs, axis=-2), axis=-2)  # [F1, F2, Channel_in, Channel_out]
+            logger.info(f"FIs.shape = {FIs.shape}")
+            ############ FI end #########
+
+            ############ GL begin #######
+            grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
+            logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
+            ############ GL end #########
 
         # 2種類のコストのペア
-        # NOTE: (N, 2), N=target layerの前のレイヤと繋がってる重みの数 (前レイヤのニューロン数 * targetレイヤのニューロン数)
-        pairs = np.asarray([grad_scndcr.flatten(), FIs.flatten()]).T
-        total_cands[idx_to_tl] = {"shape": FIs.shape, "costs": pairs}
-
-        # TODO: 以下はLSTMの場合の処理？============================================
-        # total_cands[idx_to_tl] = {"shape": [], "costs": []}
-        # pairs = []
-        # for _FIs, _grad_scndcr in zip(FIs, grad_scndcr):
-        #     pairs = np.asarray([_grad_scndcr.flatten(), _FIs.flatten()]).T
-        #     total_cands[idx_to_tl]["shape"].append(_FIs.shape)
-        #     total_cands[idx_to_tl]["costs"].append(pairs)
-        # ここまで==================================================================
+        if not model_utils.is_LSTM(lname):
+            # NOTE: (N, 2), N=target layerの前のレイヤと繋がってる重みの数 (前レイヤのニューロン数 * targetレイヤのニューロン数)
+            pairs = np.asarray([grad_scndcr.flatten(), FIs.flatten()]).T
+            total_cands[idx_to_tl] = {"shape": FIs.shape, "costs": pairs}
+        else:
+            pass
+            # TODO: 以下はLSTMの場合の処理？============================================
+            # total_cands[idx_to_tl] = {"shape": [], "costs": []}
+            # pairs = []
+            # for _FIs, _grad_scndcr in zip(FIs, grad_scndcr):
+            #     pairs = np.asarray([_grad_scndcr.flatten(), _FIs.flatten()]).T
+            #     total_cands[idx_to_tl]["shape"].append(_FIs.shape)
+            #     total_cands[idx_to_tl]["costs"].append(pairs)
+            # ここまで==================================================================
 
     return total_cands
 
@@ -377,23 +522,60 @@ if __name__ == "__main__":
         # repair loaderをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
+        fixed_repair_loader = fix_dataloader(repair_loader)  # 順番fix ver.
         repair_ds = repair_loader.dataset  # HACK: これはメモリ食うのでなんとかした方がいいかも. 画像データでも問題なければそのままで.
-        X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
-        logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
-
         # 学習済みモデルをロード (keras)
         model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
+        # tabular dataset
         if dataset_type(task_name) == "tabular":
+            X_repair, y_repair = (
+                repair_ds.tensors[0].detach().numpy().copy(),
+                repair_ds.tensors[1].detach().numpy().copy(),
+            )
+            logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
             loss_fn = "binary_crossentropy"
+            model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
+            # 予測のスコアとそこから予測ラベル取得
+            pred_scores = model.predict(X_repair, verbose=-1)
+            pred_labels = np.argmax(pred_scores, axis=1)
+            correct_predictions = pred_labels == y_repair
+
+        # image dataset
         elif dataset_type(task_name) == "image":
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             loss_fn = "categorical_crossentropy"
+            model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
+            # repair_loaderを使ってバッチで予測
+            pred_labels = []  # 予測ラベルの配列
+            correct_predictions = []  # あってたかどうかの配列
+            X_repair, y_repair = [], []
+            for batch_idx, (data, labels) in enumerate(fixed_repair_loader):
+                data, labels = data.to(device), labels.to(device)
+                # data, labelsをnumpyに変換
+                data, labels = (
+                    data.detach().cpu().numpy().copy(),
+                    labels.detach().cpu().numpy().copy(),
+                )
+                # dataをchannel_lastに変換
+                data = np.transpose(data, (0, 2, 3, 1))
+                # keras modelの予測を実行
+                pred_scores = model.predict(data, verbose=1)  # NOTE: これはkeras.modelのpredictメソッドね
+                pred_labels_tmp = np.argmax(pred_scores, axis=1)
+                # 全体の予測ラベルの配列に追加
+                pred_labels.extend(pred_labels_tmp)
+                # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+                correctness_tmp = pred_labels_tmp == labels
+                # 全体の正解配列に追加
+                correct_predictions.extend(correctness_tmp)
+                # data, labelを追加
+                X_repair.extend(data)
+                y_repair.extend(labels)
+            correct_predictions = np.array(correct_predictions)
+            X_repair = np.array(X_repair)
+            y_repair = np.array(y_repair)
+            # print(sum(correct_predictions), len(correct_predictions))
+
         # TODO: for text dataset
-        # elif dataset_type(task_name) == "text":
-        model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
-        # 予測のスコアとそこから予測ラベル取得
-        pred_scores = model.predict(X_repair, verbose=-1)
-        pred_labels = np.argmax(pred_scores, axis=1)
-        correct_predictions = pred_labels == y_repair
 
         # 対象となる重みを取得
         target_weight = get_target_weights(model)
@@ -430,7 +612,11 @@ if __name__ == "__main__":
 
         # repairのために使うデータのインデックス
         indices_for_repair = target_indices_wrong + list(indices_to_correct)
-        X_for_repair, y_for_repair = X_repair[indices_for_repair], y_repair[indices_for_repair]
+        X_for_repair, y_for_repair = (
+            X_repair[indices_for_repair],
+            y_repair[indices_for_repair],
+        )
+        logger.info(f"X_for_repair.shape = {X_for_repair.shape}, y_for_repair.shape = {y_for_repair.shape}")
 
         # target_indicesと同じ数のデータを，正しい予測のデータからランダムにサンプリングする
         # この際, 正しいデータからのサンプリングは各ラベルから均等になるようにサンプリングする
@@ -493,12 +679,21 @@ if __name__ == "__main__":
             )
             logger.info(f"saved to {used_data_save_path}")
 
+            # =====================================================================
+            # NOTE: ここまでは画像データでもエラーなく行けたっぽいので, localizeの本体の実装に集中.
+            # =====================================================================
+
             # 開始時間計測
             s = time.clock()
             # logger.info(f"Start time: {s}")
             # localizationを実行
             indices_to_places_to_fix, front_lst = run_arachne_localize(
-                X_for_loc, y_for_loc, target_indices_wrong, sampled_indices_correct, target_weight, model
+                X_for_loc,
+                y_for_loc,
+                target_indices_wrong,
+                sampled_indices_correct,
+                target_weight,
+                model,
             )
             logger.info(f"Places to fix {indices_to_places_to_fix}")
             # 終了時間計測

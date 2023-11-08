@@ -444,7 +444,7 @@ class GTSRBModel(ImageModel):
     def forward(self, x):
         out = F.relu(self.conv1(x))
         out = self.batch_normalization1(out)
-        out =    F.max_pool2d(out, 2)
+        out = F.max_pool2d(out, 2)
         out = F.relu(self.conv2(out))
         out = self.batch_normalization2(out)
         out = F.max_pool2d(out, 2)
