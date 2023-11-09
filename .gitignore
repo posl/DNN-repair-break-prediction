@@ -8,6 +8,7 @@ data/
 *.pt
 *.h5
 *.pdf
+*.pkl
 *.npy
 *.npz
 *.ipynb

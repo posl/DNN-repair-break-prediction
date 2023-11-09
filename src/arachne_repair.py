@@ -15,7 +15,7 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.layers import Input
 from sklearn.preprocessing import Normalizer
-from lib.util import json2dict, dataset_type
+from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -56,7 +56,6 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
-    target_column = setting_dict["TARGET_COLUMN"]
     num_fold = setting_dict["NUM_FOLD"]
 
     # モデルとデータの読み込み先のディレクトリ
@@ -82,24 +81,71 @@ if __name__ == "__main__":
     # train set, repair set, test setをロード（最終確認用）
     train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
     train_loader = torch.load(train_data_path)
-    train_ds = train_loader.dataset
-    X_train, y_train = train_ds.tensors[0].detach().numpy().copy(), train_ds.tensors[1].detach().numpy().copy()
-    logger.info(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
-    print(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
-
     repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
     repair_loader = torch.load(repair_data_path)
-    repair_ds = repair_loader.dataset
-    X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
-    logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
-    print(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
-
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
     test_loader = torch.load(test_data_path)
-    test_ds = test_loader.dataset
-    X_test, y_test = test_ds.x.detach().numpy().copy(), test_ds.y.detach().numpy().copy()
-    logger.info(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
-    print(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
+
+    # tabular datasetの場合はデータセット全体をそのままnumpy配列にする
+    if dataset_type(task_name) == "tabular":
+        train_ds = train_loader.dataset
+        repair_ds = repair_loader.dataset
+        test_ds = test_loader.dataset
+        X_train, y_train = train_ds.tensors[0].detach().numpy().copy(), train_ds.tensors[1].detach().numpy().copy()
+        logger.info(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
+        print(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
+
+        X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
+        logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
+        print(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
+
+        X_test, y_test = test_ds.x.detach().numpy().copy(), test_ds.y.detach().numpy().copy()
+        logger.info(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
+        print(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
+    # TODO: image datasetの場合は？
+    elif dataset_type(task_name) == "image":
+        X_train, X_repair, X_test, y_train, y_repair, y_test = [], [], [], [], [], []  # 6つの空のリストを作成
+        # train, repair, testそれぞれのfix_loaderに対して
+        for div, fixed_loader in zip(
+            ["train", "repair", "test"],
+            [fix_dataloader(train_loader), fix_dataloader(repair_loader), fix_dataloader(test_loader)],
+        ):
+            # loader内の各バッチに対して
+            for data, labels in fixed_loader:
+                data, labels = (
+                    data.detach().cpu().numpy().copy(),
+                    labels.detach().cpu().numpy().copy(),
+                )
+                data = np.transpose(data, (0, 2, 3, 1))
+                if div == "train":
+                    X_train.append(data)
+                    y_train.append(labels)
+                elif div == "repair":
+                    X_repair.append(data)
+                    y_repair.append(labels)
+                elif div == "test":
+                    X_test.append(data)
+                    y_test.append(labels)
+        # X_train, X_repair, X_testをnumpy配列に変換
+        X_train, X_repair, X_test = (
+            np.concatenate(X_train, axis=0),
+            np.concatenate(X_repair, axis=0),
+            np.concatenate(X_test, axis=0),
+        )
+        # y_train, y_repair, y_testをnumpy配列に変換
+        y_train, y_repair, y_test = (
+            np.concatenate(y_train, axis=0),
+            np.concatenate(y_repair, axis=0),
+            np.concatenate(y_test, axis=0),
+        )
+        # 各データの形状を出力
+        logger.info(
+            f"X_train.shape = {X_train.shape}, X_repair.shape = {X_repair.shape}, X_test.shape = {X_test.shape}"
+        )
+        y_train, y_repair, y_test = np.array(y_train), np.array(y_repair), np.array(y_test)
+        logger.info(
+            f"y_train.shape = {y_train.shape}, y_repair.shape = {y_repair.shape}, y_test.shape = {y_test.shape}"
+        )
 
     ################################################
     # localize時に保存したrepair用データを読み込み #
@@ -215,7 +261,5 @@ if __name__ == "__main__":
     os.makedirs(check_save_dir, exist_ok=True)
     check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
     # npz形式で保存
-    np.savez(
-        check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"]
-    )
+    np.savez(check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"])
     logger.info(f"save is_corr_dic to {check_save_path}")

@@ -7,7 +7,8 @@ from logging import getLogger
 
 logger = getLogger("base_logger")
 
-import time
+import time, pickle
+import numpy as np
 
 
 class Searcher(object):
