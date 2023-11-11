@@ -303,6 +303,9 @@ class FashionModel(ImageModel):
         self.dense1 = nn.Linear(7 * 7 * 64, 1024)
         self.dropout = nn.Dropout(0.4)
         self.dense2 = nn.Linear(1024, 10)
+        self.keras_lid_to_torch_layers = {
+            1: self.conv1, 3: self.conv2, 7: self.dense1, 9: self.dense2
+        }
 
     def forward(self, x):
         out = F.relu(self.conv1(x))
@@ -440,6 +443,9 @@ class GTSRBModel(ImageModel):
         self.dense1 = nn.Linear(250 * 4 * 4, 200)
         self.batch_normalization4 = nn.BatchNorm1d(200)
         self.dense2 = nn.Linear(200, 43)
+        self.keras_lid_to_torch_layers = {
+            1: self.conv1, 4: self.conv2, 7: self.conv3, 12: self.dense1, 14: self.dense2
+        }
 
     def forward(self, x):
         out = F.relu(self.conv1(x))
@@ -608,6 +614,9 @@ class C10Model(ImageModel):
         self.dense1 = nn.Linear(2048 * 4, 256)
         self.dense2 = nn.Linear(256, 256)
         self.dense3 = nn.Linear(256, 10)
+        self.keras_lid_to_torch_layers = {
+            1: self.conv1, 2: self.conv2, 4: self.conv3, 5: self.conv4, 9: self.dense1, 10: self.dense2, 11: self.dense3
+        }
 
     def forward(self, x):
         out = F.relu(self.conv1(x))

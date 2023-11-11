@@ -2,7 +2,9 @@
 Use differential evolution
 """
 import pickle
-from src_arachne.search.searcher_vk import Searcher
+from src_arachne.new_search.searcher_vk import Searcher
+import torch
+from tqdm import tqdm
 
 # for logging
 from logging import getLogger
@@ -30,22 +32,16 @@ class DE_searcher(Searcher):
         indices_to_wrong,
         num_label,
         indices_to_target_layers,
+        task_name,
+        device,
         mutation=(0.5, 1),
         recombination=0.7,
         max_search_num=100,
-        initial_predictions=None,
         model=None,
         patch_aggr=None,
         batch_size=None,
-        act_func=None,
         is_lstm=False,
         is_multi_label=True,
-        X_train=None,
-        X_repair=None,
-        X_test=None,
-        y_train=None,
-        y_repair=None,
-        y_test=None,
     ):
         """ """
         super(DE_searcher, self).__init__(
@@ -55,19 +51,13 @@ class DE_searcher(Searcher):
             indices_to_wrong,
             num_label,
             indices_to_target_layers,
+            task_name,
+            device,
             max_search_num=max_search_num,
-            initial_predictions=initial_predictions,
             model=model,
             batch_size=batch_size,
-            act_func=act_func,
             is_lstm=is_lstm,
             is_multi_label=is_multi_label,
-            X_train=X_train,
-            X_repair=X_repair,
-            X_test=X_test,
-            y_train=y_train,
-            y_repair=y_repair,
-            y_test=y_test,
         )
 
         # fitness computation related initialisation
@@ -116,12 +106,12 @@ class DE_searcher(Searcher):
             # since our op is set
             deltas[idx_to_tl][tuple(inner_indices)] = patch_candidate[i]
 
-        # 以下で目的関数の計算（論文のeq3）
+        # 以下で目的関数の計算（論文のeq3）, deltasをセットして予測結果を取得する
         if not self.lstm_mdl:
-            predictions, _, loss_v = self.move(deltas, update_op="set")
+            loss_v = self.move(deltas)
         else:
             # here, we don't have to be worry about the corre_predictins -> alrady done in move_v3.
-            predictions, _, loss_v = self.move_lstm(deltas)
+            loss_v = self.move_lstm(deltas)
         # assert predictions is not None
 
         # 以下で目的関数の計算（論文のeq4）
@@ -226,7 +216,8 @@ class DE_searcher(Searcher):
         # print ("Places to fix", places_to_fix)
 
         # 各個体のfitnessを計算
-        for ind in pop:
+        logger.info("Evaluating initial population...")
+        for ind in tqdm(pop, total=len(pop), desc=f"processing initial population"):
             ind.fitness.values = toolbox.evaluate(ind, places_to_fix)
             ind.model_name = None
 
@@ -248,7 +239,8 @@ class DE_searcher(Searcher):
             MU = self.random.uniform(self.mutation[0], self.mutation[1])
 
             # 各個体について繰り返し
-            for pop_idx, ind in enumerate(pop):
+            for pop_idx, ind in tqdm(enumerate(pop), total=len(pop), desc=f"iter_idx: {iter_idx}"):
+                print(f"pop_idx: {pop_idx}, ind: {ind}")
                 t0 = time.time()
                 # set model name
                 new_model_name = "iter{}-pop{}".format(iter_idx, pop_idx)
@@ -308,7 +300,8 @@ class DE_searcher(Searcher):
 
             # check for two stop coniditions
             # ここでearly stopの判定を行う (fitnessが変化しないエポックが一定数続いたら終了)
-            if self.is_the_performance_unchanged(best):
+            # if self.is_the_performance_unchanged(best):
+            if True:
                 logger.info("Performance has not been changed over {} iterations".format(self.num_iter_unchanged))
                 break
 

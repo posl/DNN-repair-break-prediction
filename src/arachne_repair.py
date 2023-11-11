@@ -1,4 +1,4 @@
-import os, sys, re, time, argparse
+import os, sys, re, time, argparse, pickle
 from collections import defaultdict
 from ast import literal_eval
 
@@ -36,7 +36,9 @@ if __name__ == "__main__":
     parser.add_argument("path", type=str)
     parser.add_argument("fold", type=int)
     parser.add_argument("rep", type=int)
+    parser.add_argument("--mode", choices=["repair", "check"])
     args = parser.parse_args()
+    mode = args.mode
     # 実験のディレクトリと実験名を取得
     exp_dir = os.path.dirname(args.path)
     arachne_dir = exp_dir.replace("care", "arachne")
@@ -49,7 +51,7 @@ if __name__ == "__main__":
     # コマンドライン引数からfoldとrepの取得
     k = args.fold
     rep = args.rep
-    logger.info(f"exp_dir={exp_dir}, fold={k}, rep={rep}")
+    logger.info(f"exp_dir={exp_dir}, fold={k}, rep={rep}, mode={mode}")
 
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
@@ -86,6 +88,8 @@ if __name__ == "__main__":
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
     test_loader = torch.load(test_data_path)
 
+    # X_train, X_repair, X_test, y_train, y_repair, y_testが必要なのでセットする
+    X_train, X_repair, X_test, y_train, y_repair, y_test = [], [], [], [], [], []  # 6つの空のリストを作成
     # tabular datasetの場合はデータセット全体をそのままnumpy配列にする
     if dataset_type(task_name) == "tabular":
         train_ds = train_loader.dataset
@@ -104,7 +108,6 @@ if __name__ == "__main__":
         print(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
     # TODO: image datasetの場合は？
     elif dataset_type(task_name) == "image":
-        X_train, X_repair, X_test, y_train, y_repair, y_test = [], [], [], [], [], []  # 6つの空のリストを作成
         # train, repair, testそれぞれのfix_loaderに対して
         for div, fixed_loader in zip(
             ["train", "repair", "test"],
@@ -249,17 +252,24 @@ if __name__ == "__main__":
     save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, file_name)
-    # DEによるrepairを実行
-    is_corr_dic = searcher.search(places_list, save_path=save_path)
-
-    # 終了時間計測
-    e = time.clock()
-    logger.info(f"Total execution time: {e-s} sec.")
-
-    # is_corr_dicの保存先
-    check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
-    os.makedirs(check_save_dir, exist_ok=True)
-    check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
-    # npz形式で保存
-    np.savez(check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"])
-    logger.info(f"save is_corr_dic to {check_save_path}")
+    # repairをする場合
+    if mode == "repair":
+        # DEによるrepairを実行
+        logger.info(f"Start DE search...")
+        searcher.search(places_list, save_path=save_path)
+        # 終了時間計測
+        e = time.clock()
+        logger.info(f"Total execution time: {e-s} sec.")
+    # repairの結果を各divisionでチェックする場合
+    elif mode == "check":
+        with open(save_path, "rb") as f:
+            deltas = pickle.load(f)
+        print(deltas.keys())
+        is_corr_dic = searcher.summarise_results(deltas)
+        # is_corr_dicの保存先
+        check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
+        os.makedirs(check_save_dir, exist_ok=True)
+        check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
+        # npz形式で保存
+        np.savez(check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"])
+        logger.info(f"save is_corr_dic to {check_save_path}")
