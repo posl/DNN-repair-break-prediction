@@ -23,7 +23,7 @@ import seaborn as sns
 import warnings
 
 # Arachne関連のimport
-import src_arachne.search.de_vk as de
+import src_arachne.keras_search.de_vk as de
 
 # plot setting
 sns.set_style("white")

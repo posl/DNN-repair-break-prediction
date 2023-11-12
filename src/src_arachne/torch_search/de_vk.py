@@ -2,7 +2,7 @@
 Use differential evolution
 """
 import pickle
-from src_arachne.new_search.searcher_vk import Searcher
+from src_arachne.torch_search.searcher_vk import Searcher
 import torch
 from tqdm import tqdm
 

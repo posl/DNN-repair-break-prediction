@@ -2,7 +2,7 @@
 Use differential evolution
 """
 import pickle
-from src_arachne.search.searcher_vk import Searcher
+from src_arachne.keras_search.searcher_vk import Searcher
 
 # for logging
 from logging import getLogger

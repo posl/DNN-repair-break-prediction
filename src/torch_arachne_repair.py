@@ -18,7 +18,7 @@ import seaborn as sns
 import warnings
 
 # Arachne関連のimport
-import src_arachne.new_search.de_vk as de
+import src_arachne.torch_search.de_vk as de
 
 sys.path.append(os.pardir)
 # plot setting
