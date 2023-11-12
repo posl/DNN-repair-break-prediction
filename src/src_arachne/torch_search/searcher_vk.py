@@ -103,8 +103,8 @@ class Searcher(object):
             tl = self.dic_keras_lid_to_torch_layers[idx_to_tl]
             lname = tl.__class__.__name__
             if lname == "Conv2d" or lname == "Linear":
-                self.init_weights[idx_to_tl] = tl.weight.detach().numpy()
-                self.init_biases[idx_to_tl] = tl.bias.detach().numpy()
+                self.init_weights[idx_to_tl] = tl.weight.cpu().detach().numpy()
+                self.init_biases[idx_to_tl] = tl.bias.cpu().detach().numpy()
             # TODO:
             elif lname == "LSTM":
                 pass
@@ -180,7 +180,7 @@ class Searcher(object):
             tl = self.dic_keras_lid_to_torch_layers[idx_to_t_mdl_l]
             lname = tl.__class__.__name__
             if lname == "Conv2d" or lname == "Linear":
-                tl.weight.data = torch.from_numpy(delta)
+                tl.weight.data = torch.from_numpy(delta).to(self.device)
                 # tl.set_weights([delta, self.init_biases[idx_to_t_mdl_l]])
             # TODO:
             elif lname == "LSTM":
@@ -212,10 +212,10 @@ class Searcher(object):
             i = self.inputs[chunk]
             l = self.ground_truth_labels[chunk]
             # バッチへの予測
-            out = self.mdl.predict(torch.from_numpy(i), device=self.device)
-            pred, prob = out["pred"], out["prob"]
+            out = self.mdl.predict(torch.from_numpy(i).to(self.device), device=self.device)
+            pred, prob = out["pred"].cpu(), out["prob"].cpu()
             # ロスの計算
-            loss = loss_fn(prob, torch.from_numpy(l)).detach().numpy()
+            loss = loss_fn(prob, torch.from_numpy(l)).cpu().detach().numpy()
             # 予測ラベルと真のラベル
             y_preds.append(pred)
             y_trues.append(l)

@@ -74,11 +74,11 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     # repairのためのデータを抽出
     X_for_repair_keras, y_for_repair_keras = used_data["X_for_repair"], used_data["y_for_repair"]
     X_for_repair_torch = np.transpose(X_for_repair_keras, (0, 3, 1, 2)) # channel firstにもどす
-    X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone(), torch.from_numpy(y_for_repair_keras).clone()
+    X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
     # 予測の成功or失敗数を確認
     pred_labels = model.predict(X_for_repair, device=device)["pred"]
     correct_predictions = pred_labels == y_for_repair
-    correct_predictions = correct_predictions.detach().numpy().copy()
+    correct_predictions = correct_predictions.to('cpu').detach().numpy()
     logger.info(
         f"correct predictions in (X_for_repair, y_for_repair): {np.sum(correct_predictions)} / {len(correct_predictions)}"
     )
@@ -87,7 +87,7 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     indices_to_wrong = list(range(num_wrong))
     indices_to_correct = list(range(num_wrong, len(correct_predictions)))
     # 不正解データ
-    pred_labels, y_for_repair = pred_labels.detach().numpy().copy(), y_for_repair.detach().numpy().copy()
+    pred_labels, y_for_repair = pred_labels.to('cpu').detach().numpy().copy(), y_for_repair.to('cpu').detach().numpy().copy()
     pred_labels_for_neg = pred_labels[indices_to_wrong]
     is_wrong_arr = pred_labels_for_neg != y_for_repair[indices_to_wrong]
     # is_wrong_arrが全てTrue (indices to wrongから抜き出したデータは全て不正解)
@@ -308,7 +308,7 @@ if __name__ == "__main__":
         batch_size =128
         # searchのためのクラスのインスタンス化
         searcher = de.DE_searcher(
-            inputs=np.float32(X_for_repair),
+            inputs=X_for_repair.to("cpu").detach().numpy().copy().astype(np.float32),
             labels=y_for_repair,
             indices_to_correct=indices_to_correct,
             indices_to_wrong=indices_to_wrong,

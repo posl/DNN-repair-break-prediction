@@ -225,6 +225,7 @@ class DE_searcher(Searcher):
         hof.update(pop)
         best = hof[0]
         best.model_name = "initial"
+        logger.info(f"Initial fitness: {best.fitness.values[0]} at X_best: {best}, model_name: {best.model_name}")
 
         record = stats.compile(pop)
         logbook.record(gen=0, evals=len(pop), **record)
