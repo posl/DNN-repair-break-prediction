@@ -52,6 +52,7 @@ class Searcher(object):
 
         # ラベルの設定
         if is_multi_label:
+            # ラベルが1次元配列になっているのでonehotベクトル化(2次元になる)
             if not isinstance(labels[0], Iterable):
                 from src_arachne.utils.data_util import format_label
 
@@ -201,21 +202,29 @@ class Searcher(object):
                 print("{} not supported".format(lname))
                 assert False
 
-        predictions = self.mdl.predict(torch.from_numpy(self.inputs), device=self.device)["pred"].detach().numpy()
         # 各サンプルに対する損失をnumpy配列で取得
         losses_of_all = []
-        loss_fn = torch.nn.CrossEntropyLoss()
-        for i, l in zip(self.inputs, self.labels):
-            out = self.mdl.predict(torch.unsqueeze(torch.from_numpy(i), 0), device=self.device)
-            prob = out["prob"][0]
-            loss = loss_fn(prob, torch.tensor(l)).item()
-        # for i, l in zip(self.inputs, self.labels):
-        #     i = i.reshape(1, *i.shape)
-        #     l = l.reshape(1, *l.shape)
-        #     loss, _ = self.model.evaluate(i, l, verbose=0)
+        loss_fn = torch.nn.CrossEntropyLoss(reduction="none") # NOTE: バッチ内の各サンプルずつのロスを出すため. デフォルトのreduction="mean"だとバッチ内の平均になってしまう
+        # NOTE: 一件ずつ取りだしてやるとめっちゃ遅いのでバッチ化
+        y_preds, y_trues = [], []
+        for chunk in self.chunks:
+            # chunkを使ってバッチを取り出す
+            i = self.inputs[chunk]
+            l = self.ground_truth_labels[chunk]
+            # バッチへの予測
+            out = self.mdl.predict(torch.from_numpy(i), device=self.device)
+            pred, prob = out["pred"], out["prob"]
+            # ロスの計算
+            loss = loss_fn(prob, torch.from_numpy(l)).detach().numpy()
+            # 予測ラベルと真のラベル
+            y_preds.append(pred)
+            y_trues.append(l)
+            # ロスの配列
             losses_of_all.append(loss)
-        losses_of_all = np.array(losses_of_all)
-        return predictions, losses_of_all
+        y_preds = np.concatenate(y_preds, axis=0)
+        y_trues = np.concatenate(y_trues, axis=0)
+        losses_of_all = np.concatenate(losses_of_all, axis=0)
+        return y_preds, losses_of_all
 
     def move_lstm(self, deltas):
         """

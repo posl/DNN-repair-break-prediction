@@ -305,7 +305,7 @@ if __name__ == "__main__":
         num_label = len(set(y_for_repair))
         max_search_num = 100
         patch_aggr = 10
-        batch_size = 64
+        batch_size =128
         # searchのためのクラスのインスタンス化
         searcher = de.DE_searcher(
             inputs=np.float32(X_for_repair),

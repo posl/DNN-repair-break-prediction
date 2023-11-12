@@ -36,7 +36,7 @@ if __name__ == "__main__":
     parser.add_argument("path", type=str)
     parser.add_argument("fold", type=int)
     parser.add_argument("rep", type=int)
-    parser.add_argument("--mode", choices=["repair", "check"])
+    parser.add_argument("--mode", choices=["repair", "check"], default="repair")
     args = parser.parse_args()
     mode = args.mode
     # 実験のディレクトリと実験名を取得
@@ -273,3 +273,5 @@ if __name__ == "__main__":
         # npz形式で保存
         np.savez(check_save_path, train=is_corr_dic["train"], repair=is_corr_dic["repair"], test=is_corr_dic["test"])
         logger.info(f"save is_corr_dic to {check_save_path}")
+    else:
+        raise ValueError(f"Invalid mode: {mode}")

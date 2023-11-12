@@ -240,8 +240,6 @@ class DE_searcher(Searcher):
 
             # 各個体について繰り返し
             for pop_idx, ind in tqdm(enumerate(pop), total=len(pop), desc=f"iter_idx: {iter_idx}"):
-                print(f"pop_idx: {pop_idx}, ind: {ind}")
-                t0 = time.time()
                 # set model name
                 new_model_name = "iter{}-pop{}".format(iter_idx, pop_idx)
 
@@ -277,8 +275,6 @@ class DE_searcher(Searcher):
             # 全population終わったらその世代でのベストのパッチ候補を表示
             hof.update(pop)
             best = hof[0]
-
-            # うるさくなるのでコメントアウト
             logger.info(
                 f"[The best at Gen {iter_idx}] fitness={best.fitness.values[0]} at X_best={best}, model_name: {best.model_name}"
             )
@@ -300,15 +296,9 @@ class DE_searcher(Searcher):
 
             # check for two stop coniditions
             # ここでearly stopの判定を行う (fitnessが変化しないエポックが一定数続いたら終了)
-            # if self.is_the_performance_unchanged(best):
-            if True:
+            if self.is_the_performance_unchanged(best):
                 logger.info("Performance has not been changed over {} iterations".format(self.num_iter_unchanged))
                 break
-
-            curr_time = time.time()
-            local_run_time = curr_time - iter_start_time
-            run_time = curr_time - search_start_time
-            # logger.info("Time for a single iter: {}, ({})".format(run_time, local_run_time))
 
         # with these two cases, the new model has not been saved
         # if self.empty_graph is not None:
