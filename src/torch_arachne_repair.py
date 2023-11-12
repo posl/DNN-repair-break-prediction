@@ -5,11 +5,8 @@ from ast import literal_eval
 import numpy as np
 import pandas as pd
 
-import keras as K
 import torch
-# import tensorflow as tf
-from keras.models import Model, load_model
-from lib.model import get_misclassified_index, sort_keys_by_cnt, select_model
+from lib.model import eval_model, select_model
 from lib.util import json2dict, dataset_type, fix_dataloader, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
 import torch
@@ -28,7 +25,7 @@ sns.set_style("white")
 warnings.filterwarnings("ignore")
 
 
-def set_new_weights(model, deltas):
+def set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device):
     """
     修正後の重みをモデルにセットする関数
 
@@ -38,6 +35,9 @@ def set_new_weights(model, deltas):
         修正前のモデル
     deltas: dict
         修正後の重みを保持する辞書
+    dic_keras_lid_to_torch_layers: dict
+        kerasモデルでの修正対象レイヤのインデックスとtorchモデルのレイヤの対応辞書
+    device: str
 
     Returns
     ------------------
@@ -45,13 +45,30 @@ def set_new_weights(model, deltas):
         deltasで示される重みをセットした後の, 修正後のモデル
     """
 
-    # 修正後の重みをセット
-    for lid, delta in deltas.items():
-        # 修正対象のレイヤの重みを取得
-        weights = model.layers[lid].get_weights()
-        # NOTE: レイヤがdense, conv2dの場合はこれでいけるがそれ以外だとエラーになるかも
-        # 修正後の重みをセット
-        model.layers[lid].set_weights([delta, weights[1]])
+    for idx_to_tl, delta in deltas.items():
+        tl = dic_keras_lid_to_torch_layers[idx_to_tl]
+        lname = tl.__class__.__name__
+        if lname == "Conv2d" or lname == "Linear":
+            tl.weight.data = torch.from_numpy(delta).to(device)
+        # TODO: LSTMレイヤへの対応
+        elif lname == "LSTM":
+            pass
+            # if idx_to_w == 0:  # kernel
+            #     new_kernel_w = delta  # use the full
+            #     new_recurr_kernel_w = self.init_weights[(idx_to_t_mdl_l, 1)]
+            # elif idx_to_w == 1:
+            #     new_recurr_kernel_w = delta
+            #     new_kernel_w = self.init_weights[(idx_to_t_mdl_l, 0)]
+            # else:
+            #     print("{} not allowed".format(idx_to_w), idx_to_t_mdl_l, idx_to_tl)
+            #     assert False
+            # set kernel, recurr kernel, bias
+            # fn_mdl.layers[idx_to_t_mdl_l].set_weights(
+            #     [new_kernel_w, new_recurr_kernel_w, self.init_biases[idx_to_t_mdl_l]]
+            # )
+        else:
+            print("{} not supported".format(lname))
+            assert False
     return model
 
 
@@ -125,82 +142,9 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         misclf_pred,
     )
 
-
-def load_data(data_dir, k):
-    # train set, repair set, test setをロード（最終確認用）
-    train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-    train_loader = torch.load(train_data_path)
-    repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-    repair_loader = torch.load(repair_data_path)
-    test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = torch.load(test_data_path)
-    # X_train, X_repair, X_test, y_train, y_repair, y_testが必要なのでセットする
-    X_train, X_repair, X_test, y_train, y_repair, y_test = [], [], [], [], [], []  # 6つの空のリストを作成
-    # tabular datasetの場合はデータセット全体をそのままnumpy配列にする
-    if dataset_type(task_name) == "tabular":
-        train_ds = train_loader.dataset
-        repair_ds = repair_loader.dataset
-        test_ds = test_loader.dataset
-        X_train, y_train = train_ds.tensors[0].detach().numpy().copy(), train_ds.tensors[1].detach().numpy().copy()
-        logger.info(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
-        print(f"X_train.shape = {X_train.shape}, y_train.shape = {y_train.shape}")
-
-        X_repair, y_repair = repair_ds.tensors[0].detach().numpy().copy(), repair_ds.tensors[1].detach().numpy().copy()
-        logger.info(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
-        print(f"X_repair.shape = {X_repair.shape}, y_repair.shape = {y_repair.shape}")
-
-        X_test, y_test = test_ds.x.detach().numpy().copy(), test_ds.y.detach().numpy().copy()
-        logger.info(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
-        print(f"X_test.shape = {X_test.shape}, y_test.shape = {y_test.shape}")
-    # TODO: image datasetの場合は？
-    elif dataset_type(task_name) == "image":
-        # train, repair, testそれぞれのfix_loaderに対して
-        for div, fixed_loader in zip(
-            ["train", "repair", "test"],
-            [fix_dataloader(train_loader), fix_dataloader(repair_loader), fix_dataloader(test_loader)],
-        ):
-            # loader内の各バッチに対して
-            for data, labels in fixed_loader:
-                data, labels = (
-                    data.detach().cpu().numpy().copy(),
-                    labels.detach().cpu().numpy().copy(),
-                )
-                data = np.transpose(data, (0, 2, 3, 1))
-                if div == "train":
-                    X_train.append(data)
-                    y_train.append(labels)
-                elif div == "repair":
-                    X_repair.append(data)
-                    y_repair.append(labels)
-                elif div == "test":
-                    X_test.append(data)
-                    y_test.append(labels)
-        # X_train, X_repair, X_testをnumpy配列に変換
-        X_train, X_repair, X_test = (
-            np.concatenate(X_train, axis=0),
-            np.concatenate(X_repair, axis=0),
-            np.concatenate(X_test, axis=0),
-        )
-        # y_train, y_repair, y_testをnumpy配列に変換
-        y_train, y_repair, y_test = (
-            np.concatenate(y_train, axis=0),
-            np.concatenate(y_repair, axis=0),
-            np.concatenate(y_test, axis=0),
-        )
-        # 各データの形状を出力
-        logger.info(
-            f"X_train.shape = {X_train.shape}, X_repair.shape = {X_repair.shape}, X_test.shape = {X_test.shape}"
-        )
-        y_train, y_repair, y_test = np.array(y_train), np.array(y_repair), np.array(y_test)
-        logger.info(
-            f"y_train.shape = {y_train.shape}, y_repair.shape = {y_repair.shape}, y_test.shape = {y_test.shape}"
-        )
-        return X_train, X_repair, X_test, y_train, y_repair, y_test
-
-
 def reshape_places_tf_to_torch(places_list):
     """
-    localizeした重みの位置を表すタプルに辞書を, tfの形状からtorchの形状にreshapeする.
+    localizeした重みの位置を表すタプルの辞書を, tfの形状からtorchの形状にreshapeする.
     """
     reshaped_places_list = []
     for lid, nid in places_list:
@@ -264,19 +208,6 @@ if __name__ == "__main__":
     model.to(device)
     model.eval()
     dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name, model)
-    
-    # # 学習済みモデルをロード (keras)
-    # model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
-    # if dataset_type(task_name) == "tabular":
-    #     loss_fn = "binary_crossentropy"
-    # elif dataset_type(task_name) == "image":
-    #     loss_fn = "categorical_crossentropy"
-    # # TODO: for text dataset
-    # # elif dataset_type(task_name) == "text":
-    # model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
-
-    # train, repair, test datasetをロード
-    X_train, X_repair, X_test, y_train, y_repair, y_test = load_data(data_dir, k)
 
     # localization時の情報をロード
     (
@@ -292,6 +223,16 @@ if __name__ == "__main__":
     # 特定したニューロン位置のインデックスをtfからtorchにする
     places_list = reshape_places_tf_to_torch(places_list)
     logger.info(f"Reshaped places list = {places_list}")
+
+    # 修正後の重みのファイル名
+    file_name = f"misclf-top{topn}-{misclf_true}to{misclf_pred}_fold-{k}.pkl"
+    # 修正後の重みを格納するディレクトリ名
+    save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, file_name)
+
+    # idx_to_tlとmodelのレイヤの対応
+    dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name=task_name, model=model)
 
     if mode == "repair":
         # deltas (修正対象レイヤの重みを保持する辞書) を初期化
@@ -323,12 +264,6 @@ if __name__ == "__main__":
             patch_aggr=patch_aggr,
             batch_size=batch_size,
         )
-        # 修正後の重みのファイル名
-        file_name = f"misclf-top{topn}-{misclf_true}to{misclf_pred}_fold-{k}.pkl"
-        # 修正後の重みを格納するディレクトリ名
-        save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, file_name)
 
         logger.info(f"Start DE search...")
         s = time.clock()
@@ -337,9 +272,40 @@ if __name__ == "__main__":
         logger.info(f"Total execution time: {e-s} sec.")
 
     elif mode == "check":
+        # log fileのパスも変えたい
+        
         # 修正済みのdeltasをロード
-        deltas = {}  # TODO: load deltas
-        # Arachneの結果えられたdeltasをセット
-        new_model = set_new_weights(model, deltas)
+        with open(save_path, "rb") as f:
+            deltas = pickle.load(f)
+        # logger.info("The model is saved to {}".format(save_path))
+        # print("The model is saved to {}".format(save_path))
+
+        # Arachneの結果えられたdeltasをモデルにセット
+        # TODO: とりあえずモデルがちゃんと予測できるかチェックしたい.
+        repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
+        
+        # TODO: できたらtrain, repair, testの予測結果を出して比較する. keras ver. 同様にis_corr_dictみたいな名前のやつを保存する
+        # train, repair, test dataloader
+        train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
+        train_loader = fix_dataloader(torch.load(train_data_path))
+        repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
+        repair_loader = fix_dataloader(torch.load(repair_data_path))
+        test_data_path = os.path.join(data_dir, f"test_loader.pt")
+        test_loader = fix_dataloader(torch.load(test_data_path))
+        # train, repair, testそれぞれのfix_loaderに対してeval_modelを実行
+        train_ret_dict = eval_model(repaired_model, train_loader)
+        repair_ret_dict = eval_model(repaired_model, repair_loader)
+        test_ret_dict = eval_model(repaired_model, test_loader)
+        # 各サンプルに対する予測の正解(1)か不正解か(0)のnumpy配列を取得
+        is_corr_train = train_ret_dict["correctness_arr"]
+        is_corr_repair = repair_ret_dict["correctness_arr"]
+        is_corr_test = test_ret_dict["correctness_arr"]
+        # is_corr_dicの保存先
+        check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
+        os.makedirs(check_save_dir, exist_ok=True)
+        check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
+        # npz形式で保存
+        np.savez(check_save_path, train=is_corr_train, repair=is_corr_repair, test=is_corr_test)
+        logger.info(f"save is_corr_dic to {check_save_path}")
     else:
         raise ValueError(f"Invalid mode: {mode}")
