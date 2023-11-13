@@ -90,7 +90,10 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
 
     # repairのためのデータを抽出
     X_for_repair_keras, y_for_repair_keras = used_data["X_for_repair"], used_data["y_for_repair"]
-    X_for_repair_torch = np.transpose(X_for_repair_keras, (0, 3, 1, 2)) # channel firstにもどす
+    if task_name in ["c10", "gtsrb", "fm"]:
+        X_for_repair_torch = np.transpose(X_for_repair_keras, (0, 3, 1, 2)) # channel firstにもどす
+    else:
+        X_for_repair_torch = X_for_repair_keras
     X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
     # 予測の成功or失敗数を確認
     pred_labels = model.predict(X_for_repair, device=device)["pred"]
@@ -163,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("path", type=str)
     parser.add_argument("fold", type=int)
     parser.add_argument("rep", type=int)
-    parser.add_argument("--mode", choices=["repair", "check"], default="repair")
+    parser.add_argument("--mode", choices=["repair", "predict"], default="repair")
     args = parser.parse_args()
     mode = args.mode
     # 実験のディレクトリと実験名を取得
@@ -172,7 +175,7 @@ if __name__ == "__main__":
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
 
     # log setting
-    log_file_name = exp_name.replace("training", "arachne-repair")
+    log_file_name = exp_name.replace("training", f"arachne-{mode}")
     logger = set_exp_logging(exp_dir.replace("care", "arachne"), exp_name, log_file_name)
 
     # GPU使えるかチェック
@@ -190,6 +193,11 @@ if __name__ == "__main__":
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
     num_fold = setting_dict["NUM_FOLD"]
+    # binary clf. かどうかのフラグ
+    if task_name in ["fm", "c10", "gtsrb"]:
+        is_binary = False
+    elif task_name in ["credit", "census", "bank"]: 
+        is_binary = True
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{task_name}/{exp_name}"
@@ -271,17 +279,14 @@ if __name__ == "__main__":
         e = time.clock()
         logger.info(f"Total execution time: {e-s} sec.")
 
-    elif mode == "check":
-        # log fileのパスも変えたい
-        
+    elif mode == "predict":
         # 修正済みのdeltasをロード
+        logger.info(f"Loading patches from {save_path}...")
         with open(save_path, "rb") as f:
             deltas = pickle.load(f)
-        # logger.info("The model is saved to {}".format(save_path))
-        # print("The model is saved to {}".format(save_path))
 
         # Arachneの結果えられたdeltasをモデルにセット
-        # TODO: とりあえずモデルがちゃんと予測できるかチェックしたい.
+        logger.info("Set the patches to the model...")
         repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
         
         # TODO: できたらtrain, repair, testの予測結果を出して比較する. keras ver. 同様にis_corr_dictみたいな名前のやつを保存する
@@ -291,15 +296,18 @@ if __name__ == "__main__":
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = fix_dataloader(torch.load(repair_data_path))
         test_data_path = os.path.join(data_dir, f"test_loader.pt")
-        test_loader = fix_dataloader(torch.load(test_data_path))
+        test_loader = torch.load(test_data_path) # これはfixしたらバグる(もともとtestなのでシャッフルされてないけどそれとの関係は不明)
         # train, repair, testそれぞれのfix_loaderに対してeval_modelを実行
-        train_ret_dict = eval_model(repaired_model, train_loader)
-        repair_ret_dict = eval_model(repaired_model, repair_loader)
-        test_ret_dict = eval_model(repaired_model, test_loader)
+        logger.info("Eval the repaired model with patches...")
+        train_ret_dict = eval_model(repaired_model, train_loader, is_binary=is_binary, device=device)
+        repair_ret_dict = eval_model(repaired_model, repair_loader, is_binary=is_binary, device=device)
+        test_ret_dict = eval_model(repaired_model, test_loader, is_binary=is_binary, device=device)
         # 各サンプルに対する予測の正解(1)か不正解か(0)のnumpy配列を取得
         is_corr_train = train_ret_dict["correctness_arr"]
         is_corr_repair = repair_ret_dict["correctness_arr"]
         is_corr_test = test_ret_dict["correctness_arr"]
+        # is_corr_dicの情報を表示しておく
+        logger.info(f"train: {np.sum(is_corr_train)} / {len(is_corr_train)}, repair: {np.sum(is_corr_repair)} / {len(is_corr_repair)}, test: {np.sum(is_corr_test)} / {len(is_corr_test)}")
         # is_corr_dicの保存先
         check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
         os.makedirs(check_save_dir, exist_ok=True)

@@ -625,7 +625,7 @@ class C10Model(ImageModel):
         out = F.relu(self.conv3(out))
         out = F.relu(self.conv4(out))
         out = F.max_pool2d(out, 2)
-        out = out.view(out.size(0), -1)
+        out = out.reshape(out.size(0), -1)
         out = F.relu(self.dense1(out))
         out = F.relu(self.dense2(out))
         out = self.dense3(out)

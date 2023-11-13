@@ -80,5 +80,11 @@ def keras_lid_to_torch_layers(task_name, model):
         return {
             1: model.conv1, 2: model.conv2, 4: model.conv3, 5: model.conv4, 9: model.dense1, 10: model.dense2, 11: model.dense3
         }
+    elif task_name in ["credit", "census", "bank"]:
+        ret_dic = {}
+        # 1,3,5,7,9,11の繰り返し
+        for ti, i in enumerate(range(1, 12, 2)):
+            ret_dic[i] = model.layers[ti][0]
+        return ret_dic
     else:
         assert False
