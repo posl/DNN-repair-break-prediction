@@ -5,8 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 import seaborn as sns
-
-sns.set(style="whitegrid")
+sns.set(style="whitegrid", font_scale=1.5)
 
 
 # 必要なdfを読んできてスケーリングして返す
@@ -33,21 +32,30 @@ def get_df(method, dataset, rb):
 if __name__ == "__main__":
     rb = sys.argv[1]
     obj_col = "repaired" if rb == "repair" else "broken"
+    
     # 定数たち
-    methods = ["care", "apricot"]
+    # FIXME: 実行する前に以下の変数はチェックすること
+    methods = ["care", "apricot", "arachne"]
     datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb"]
+    # datasets = ["credit", "census", "bank", "fm"]
+    
     # 描画時の表示用のラベル名たち
     expmet4show = {"pcs": "PCS", "lps": "LPS", "entropy": "Ent.", "loss": "Los."}
     dataset4show = {"credit": "Credit", "census": "Census", "bank": "Bank", "c10": "C10", "fm": "FM", "gtsrb": "GTSRB"}
-    method4show = {"care": "CARE", "apricot": "Apricot"}
+    method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne"}
     # 描画用の角度たち
     angles = np.linspace(0.25 * np.pi, 2.25 * np.pi, 5)
 
+    num_col = 3
+    num_row = 6
+
     # 描画ゾーン
-    fig = plt.figure(figsize=(9, 12))
+    fig = plt.figure(figsize=(9, 18))
     for i, (method, dataset) in enumerate(product(methods, datasets)):
         # print(method, dataset)
-        ax = fig.add_subplot(4, 3, i + 1, projection="polar")
+        if method == "arachne" and dataset in ["c10", "gtsrb"]:
+            continue
+        ax = fig.add_subplot(num_row, num_col, i + 1, projection="polar")
         df, exp_cols = get_df(method, dataset, rb)
         for tf in [True, False]:
             # 描画用の色
@@ -71,6 +79,8 @@ if __name__ == "__main__":
         ax.set_title(f"{method4show[method]}, {dataset4show[dataset]}")
     fig.legend(bbox_to_anchor=(0.5, -0.03), loc="upper center", ncol=2)
     fig.tight_layout()
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)  # この1行を入れる
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.2, wspace=0.2)  # この1行を入れる
     # fig.show()
-    plt.savefig(f"./rader_{rb}.pdf", bbox_inches="tight")
+    # plt.savefig(f"./radar_{rb}.pdf", bbox_inches="tight")
+    # FIXME: 一時的なファイル名
+    plt.savefig(f"./radar_tmp_{rb}.pdf", bbox_inches="tight")

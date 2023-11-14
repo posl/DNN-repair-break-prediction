@@ -68,6 +68,8 @@ if __name__ == "__main__":
             rb_ds_filename = f"{dataset}-fairness-setting{sid}-{rb}.csv"
         elif method == "apricot" or method == "arachne":
             rb_ds_filename = f"{dataset}-training-setting{sid}-{rb}.csv"
+        else:
+            raise ValueError(f"Unknown method: {method}")
         # repair/break datasetのcsvをロード
         rb_ds_path = os.path.join(exp_dir, "repair_break_dataset", "raw_data", rb_ds_filename)
         df = pd.read_csv(rb_ds_path)

@@ -121,7 +121,8 @@ def under_sampling(df, target_column, minority=True, sample_size_ratio=1):
 # TODO: これらの定数を外部化
 # =====================================================
 # 対象とするrepair手法のリスト
-methods = ["care", "apricot"]
+# methods = ["care", "apricot"]
+methods = ["arachne"]
 # 対象とする観点
 task_name = "correctness"
 # fairnessの場合のsensitive feature
@@ -277,4 +278,6 @@ if __name__ == "__main__":
             time_df = time_df.append(fit_time_row, ignore_index=True)
             time_df = time_df.append(inf_time_row, ignore_index=True)
     # 実行時間を保存
-    time_df.to_csv(f"/src/experiments/time_for_repair_break_model-{dataset}.csv", index=False)
+    # time_df.to_csv(f"/src/experiments/time_for_repair_break_model-{dataset}.csv", index=False)
+    # FIXME: 一時的な保存先
+    time_df.to_csv(f"/src/experiments/time_for_repair_break_model-{dataset}-arachne.csv", index=False)
