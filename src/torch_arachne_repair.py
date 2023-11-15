@@ -10,6 +10,7 @@ from lib.model import eval_model, select_model
 from lib.util import json2dict, dataset_type, fix_dataloader, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
@@ -96,9 +97,18 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         X_for_repair_torch = X_for_repair_keras
     X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
     # 予測の成功or失敗数を確認
-    pred_labels = model.predict(X_for_repair, device=device)["pred"]
+    # NOTE: model.predict(X_for_repair, device=device)["pred"] とするとX_for_repairのサイズが大きすぎてGTSRBでメモリエラーになる
+    # なのでバッチ化する
+    tmp_ds = TensorDataset(X_for_repair, y_for_repair)
+    tmp_dl = DataLoader(tmp_ds, batch_size=128, shuffle=False)
+    pred_labels = []
+    for x, _ in tmp_dl:
+        tmp_pred = model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
+        pred_labels.append(tmp_pred)
+    pred_labels = np.concatenate(pred_labels, axis=0)
+    y_for_repair = y_for_repair.to('cpu').detach().numpy().copy()
+    print(pred_labels.shape, y_for_repair.shape)
     correct_predictions = pred_labels == y_for_repair
-    correct_predictions = correct_predictions.to('cpu').detach().numpy()
     logger.info(
         f"correct predictions in (X_for_repair, y_for_repair): {np.sum(correct_predictions)} / {len(correct_predictions)}"
     )
@@ -107,7 +117,6 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     indices_to_wrong = list(range(num_wrong))
     indices_to_correct = list(range(num_wrong, len(correct_predictions)))
     # 不正解データ
-    pred_labels, y_for_repair = pred_labels.to('cpu').detach().numpy().copy(), y_for_repair.to('cpu').detach().numpy().copy()
     pred_labels_for_neg = pred_labels[indices_to_wrong]
     is_wrong_arr = pred_labels_for_neg != y_for_repair[indices_to_wrong]
     # is_wrong_arrが全てTrue (indices to wrongから抜き出したデータは全て不正解)
