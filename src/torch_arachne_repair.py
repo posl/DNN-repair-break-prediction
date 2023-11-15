@@ -82,7 +82,9 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     ################################################
 
     used_data_save_dir = os.path.join(arachne_dir, "used_data", task_name, f"rep{rep}")
-    used_data_save_path = os.path.join(used_data_save_dir, f"X-y_for_loc-repair_fold-{k}.npz")
+    used_data_save_path = os.path.join(
+        used_data_save_dir, f"X-y_for_loc-repair_fold-{k}.npz"
+    )
     used_data = np.load(used_data_save_path)
     # just for checking
     for kw in used_data.files:
@@ -90,12 +92,19 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     # checking end
 
     # repairのためのデータを抽出
-    X_for_repair_keras, y_for_repair_keras = used_data["X_for_repair"], used_data["y_for_repair"]
+    X_for_repair_keras, y_for_repair_keras = (
+        used_data["X_for_repair"],
+        used_data["y_for_repair"],
+    )
     if task_name in ["c10", "gtsrb", "fm"]:
-        X_for_repair_torch = np.transpose(X_for_repair_keras, (0, 3, 1, 2)) # channel firstにもどす
+        X_for_repair_torch = np.transpose(
+            X_for_repair_keras, (0, 3, 1, 2)
+        )  # channel firstにもどす
     else:
         X_for_repair_torch = X_for_repair_keras
-    X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
+    X_for_repair, y_for_repair = torch.from_numpy(
+        X_for_repair_torch.astype(np.float32)
+    ).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
     # 予測の成功or失敗数を確認
     # NOTE: model.predict(X_for_repair, device=device)["pred"] とするとX_for_repairのサイズが大きすぎてGTSRBでメモリエラーになる
     # なのでバッチ化する
@@ -103,11 +112,12 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     tmp_dl = DataLoader(tmp_ds, batch_size=128, shuffle=False)
     pred_labels = []
     for x, _ in tmp_dl:
-        tmp_pred = model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
+        tmp_pred = (
+            model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
+        )
         pred_labels.append(tmp_pred)
     pred_labels = np.concatenate(pred_labels, axis=0)
-    y_for_repair = y_for_repair.to('cpu').detach().numpy().copy()
-    print(pred_labels.shape, y_for_repair.shape)
+    y_for_repair = y_for_repair.to("cpu").detach().numpy().copy()
     correct_predictions = pred_labels == y_for_repair
     logger.info(
         f"correct predictions in (X_for_repair, y_for_repair): {np.sum(correct_predictions)} / {len(correct_predictions)}"
@@ -140,7 +150,9 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         # literal_evalを入れるのはweightの位置を示すペアのtupleが何故か文字列で入ってるから
         places_list.append((pair["layer"], literal_eval(pair["weight"])))
     logger.info(f"places_list (keras-styled shape): {places_list}")
-    indices_to_ptarget_layers = sorted(list(set([idx_to_tl for idx_to_tl, _ in places_list])))
+    indices_to_ptarget_layers = sorted(
+        list(set([idx_to_tl for idx_to_tl, _ in places_list]))
+    )
     logger.info(f"Patch target layers: {indices_to_ptarget_layers}")
 
     return (
@@ -154,23 +166,22 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         misclf_pred,
     )
 
+
 def reshape_places_tf_to_torch(places_list):
     """
     localizeした重みの位置を表すタプルの辞書を, tfの形状からtorchの形状にreshapeする.
     """
     reshaped_places_list = []
     for lid, nid in places_list:
-        if len(nid) == 4: # Conv2d
+        if len(nid) == 4:  # Conv2d
             place = (lid, (nid[3], nid[2], nid[0], nid[1]))
-        elif len(nid) == 2: # Linear
+        elif len(nid) == 2:  # Linear
             place = (lid, (nid[1], nid[0]))
         reshaped_places_list.append(place)
     return reshaped_places_list
 
 
-
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("path", type=str)
     parser.add_argument("fold", type=int)
@@ -185,7 +196,9 @@ if __name__ == "__main__":
 
     # log setting
     log_file_name = exp_name.replace("training", f"arachne-{mode}")
-    logger = set_exp_logging(exp_dir.replace("care", "arachne"), exp_name, log_file_name)
+    logger = set_exp_logging(
+        exp_dir.replace("care", "arachne"), exp_name, log_file_name
+    )
 
     # GPU使えるかチェック
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -205,7 +218,7 @@ if __name__ == "__main__":
     # binary clf. かどうかのフラグ
     if task_name in ["fm", "c10", "gtsrb"]:
         is_binary = False
-    elif task_name in ["credit", "census", "bank"]: 
+    elif task_name in ["credit", "census", "bank"]:
         is_binary = True
 
     # モデルとデータの読み込み先のディレクトリ
@@ -221,7 +234,9 @@ if __name__ == "__main__":
     # 学習済みモデルをロード (torch)
     model = select_model(task_name=task_name)
     model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
-    model.load_state_dict(torch.load(model_path, map_location=torch.device(device=device)))
+    model.load_state_dict(
+        torch.load(model_path, map_location=torch.device(device=device))
+    )
     model.to(device)
     model.eval()
     dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name, model)
@@ -249,7 +264,9 @@ if __name__ == "__main__":
     save_path = os.path.join(save_dir, file_name)
 
     # idx_to_tlとmodelのレイヤの対応
-    dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name=task_name, model=model)
+    dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(
+        task_name=task_name, model=model
+    )
 
     if mode == "repair":
         # deltas (修正対象レイヤの重みを保持する辞書) を初期化
@@ -263,7 +280,7 @@ if __name__ == "__main__":
         num_label = len(set(y_for_repair))
         max_search_num = 100
         patch_aggr = 10
-        batch_size =128
+        batch_size = 128
         # searchのためのクラスのインスタンス化
         searcher = de.DE_searcher(
             inputs=X_for_repair.to("cpu").detach().numpy().copy().astype(np.float32),
@@ -296,8 +313,10 @@ if __name__ == "__main__":
 
         # Arachneの結果えられたdeltasをモデルにセット
         logger.info("Set the patches to the model...")
-        repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
-        
+        repaired_model = set_new_weights(
+            model, deltas, dic_keras_lid_to_torch_layers, device
+        )
+
         # TODO: できたらtrain, repair, testの予測結果を出して比較する. keras ver. 同様にis_corr_dictみたいな名前のやつを保存する
         # train, repair, test dataloader
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
@@ -305,24 +324,41 @@ if __name__ == "__main__":
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = fix_dataloader(torch.load(repair_data_path))
         test_data_path = os.path.join(data_dir, f"test_loader.pt")
-        test_loader = torch.load(test_data_path) # これはfixしたらバグる(もともとtestなのでシャッフルされてないけどそれとの関係は不明)
+        test_loader = torch.load(
+            test_data_path
+        )  # これはfixしたらバグる(もともとtestなのでシャッフルされてないけどそれとの関係は不明)
         # train, repair, testそれぞれのfix_loaderに対してeval_modelを実行
         logger.info("Eval the repaired model with patches...")
-        train_ret_dict = eval_model(repaired_model, train_loader, is_binary=is_binary, device=device)
-        repair_ret_dict = eval_model(repaired_model, repair_loader, is_binary=is_binary, device=device)
-        test_ret_dict = eval_model(repaired_model, test_loader, is_binary=is_binary, device=device)
+        train_ret_dict = eval_model(
+            repaired_model, train_loader, is_binary=is_binary, device=device
+        )
+        repair_ret_dict = eval_model(
+            repaired_model, repair_loader, is_binary=is_binary, device=device
+        )
+        test_ret_dict = eval_model(
+            repaired_model, test_loader, is_binary=is_binary, device=device
+        )
         # 各サンプルに対する予測の正解(1)か不正解か(0)のnumpy配列を取得
         is_corr_train = train_ret_dict["correctness_arr"]
         is_corr_repair = repair_ret_dict["correctness_arr"]
         is_corr_test = test_ret_dict["correctness_arr"]
         # is_corr_dicの情報を表示しておく
-        logger.info(f"train: {np.sum(is_corr_train)} / {len(is_corr_train)}, repair: {np.sum(is_corr_repair)} / {len(is_corr_repair)}, test: {np.sum(is_corr_test)} / {len(is_corr_test)}")
+        logger.info(
+            f"train: {np.sum(is_corr_train)} / {len(is_corr_train)}, repair: {np.sum(is_corr_repair)} / {len(is_corr_repair)}, test: {np.sum(is_corr_test)} / {len(is_corr_test)}"
+        )
         # is_corr_dicの保存先
-        check_save_dir = os.path.join(arachne_dir, "check_repair_results", task_name, f"rep{rep}")
+        check_save_dir = os.path.join(
+            arachne_dir, "check_repair_results", task_name, f"rep{rep}"
+        )
         os.makedirs(check_save_dir, exist_ok=True)
         check_save_path = os.path.join(check_save_dir, f"is_corr_fold-{k}.npz")
         # npz形式で保存
-        np.savez(check_save_path, train=is_corr_train, repair=is_corr_repair, test=is_corr_test)
+        np.savez(
+            check_save_path,
+            train=is_corr_train,
+            repair=is_corr_repair,
+            test=is_corr_test,
+        )
         logger.info(f"save is_corr_dic to {check_save_path}")
     else:
         raise ValueError(f"Invalid mode: {mode}")
