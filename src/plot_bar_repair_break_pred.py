@@ -28,7 +28,7 @@ if __name__ == "__main__":
     for rb in ["repair", "break"]:
         fig = plt.figure(figsize=(18, 6), facecolor="w")
         for i, method in enumerate(methods):
-            df = pd.DataFrame(columns=["dataset", "metric", "val"])
+            df = pd.DataFrame(columns=["dataset", "metric", "val", "clf"])
             ax = fig.add_subplot(1, len(methods), i + 1)  # メソッドごとにサブプロットを追加
             for dataset in datasets:
                 # print(method, dataset, rb)
@@ -36,23 +36,36 @@ if __name__ == "__main__":
                     continue
                 path = f"/src/experiments/{method}/repair_break_model/{dataset}-{rb}-test.csv"
                 _df = pd.read_csv(path)[used_metrics]
-                # 新たな行を追加
-                max_arr = np.max(_df.values, axis=0)  # 最も良かった分類器のメトリクスだけを取得
-                new_rows = np.array(
-                    [[dataset4show[dataset]] * len(used_metrics), used_metrics, max_arr]
-                ).T
-                new_entry = pd.DataFrame(
-                    data=new_rows, columns=["dataset", "metric", "val"]
-                )
-                df = pd.concat([df, new_entry])
+                for idx, row in _df.iterrows():
+                    for metric in used_metrics:
+                        df = df.append(
+                            {
+                                "dataset": dataset4show[dataset],
+                                "metric": metric,
+                                "val": row[metric],
+                                "clf": clf[idx],
+                            },
+                            ignore_index=True,
+                        )
+                # # 新たな行を追加
+                # max_arr = np.max(_df.values, axis=0)  # 最も良かった分類器のメトリクスだけを取得
+                # new_rows = np.array(
+                #     [[dataset4show[dataset]] * len(used_metrics), used_metrics, max_arr]
+                # ).T
+                # new_entry = pd.DataFrame(
+                #     data=new_rows, columns=["dataset", "metric", "val"]
+                # )
+                # df = pd.concat([df, new_entry])
             df["val"] = df["val"].astype("float")
             # 全データセット終わったら描画する
             palette = sns.color_palette(n_colors=len(used_metrics))
             plt.xticks(rotation=45)
+            _error_bar = lambda x: (x.min(), x.max()) # エラーバーの表示方法. "se"なら標準誤差, "sd"なら標準偏差になるが今回は最小から最大値までの範囲を示すカスタムのエラーバーにする.
+            _estimator = "median" # 中央値をとる. default: "mean"で平均
             sns.barplot(
-                data=df, x="dataset", y="val", hue="metric", palette=palette, ax=ax
+                data=df, x="dataset", y="val", hue="metric", palette=palette, ax=ax, errorbar=_error_bar, estimator=_estimator
             )
-            ax.set_title(f"{rb+'s'} pred. models ({method4show[method]})")
+            ax.set_title(f"{rb.capitalize()+'s'} pred. models ({method4show[method]})")
             ax.set_xlabel("Datasets")
             if i == 0:
                 ax.set_ylabel("Val. of metrics")
@@ -67,4 +80,4 @@ if __name__ == "__main__":
         fig.tight_layout()
         fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)
         # plt.show()
-        plt.savefig(f"./bar_pred_perf_{rb}.pdf", bbox_inches="tight", dpi=400)
+        plt.savefig(f"./bar_pred_perf_{rb}.pdf", bbox_inches="tight", dpi=300)
