@@ -64,7 +64,6 @@ if __name__ == "__main__":
     for i, (method, dataset) in enumerate(product(methods, datasets)):
         # FIXME: 一時的なif
         if method == "arachne" and dataset in ["gtsrb"]:
-            print(method, dataset)
             continue
         # print(method, dataset)
         ax = fig.add_subplot(num_row, num_col, i + 1, projection="polar")
@@ -95,12 +94,10 @@ if __name__ == "__main__":
             np.linspace(0, 1, num=5), ["0", "", "0.5", "", "1.0"], angle=30
         )  # r軸めもり
         ax.set_title(f"{method4show[method]}, {dataset4show[dataset]}")
-    fig.legend(bbox_to_anchor=(0.5, -0.03), loc="upper center", ncol=2)
+    fig.legend(bbox_to_anchor=(0.5, 1.06), loc="upper center", ncol=2, fontsize=20)
     fig.tight_layout()
     fig.subplots_adjust(
         left=0, right=1, bottom=0, top=1, hspace=0.2, wspace=0.2
     )  # この1行を入れる
     # fig.show()
-    # plt.savefig(f"./radar_{rb}.pdf", bbox_inches="tight")
-    # FIXME: 一時的なファイル名
-    plt.savefig(f"./radar_tmp_{rb}.pdf", bbox_inches="tight")
+    plt.savefig(f"./radar_{rb}.pdf", bbox_inches="tight", dpi=600)
