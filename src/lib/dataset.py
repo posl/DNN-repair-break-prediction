@@ -5,6 +5,7 @@ import pandas as pd
 
 import torch
 from torch.utils.data import DataLoader, Dataset, TensorDataset, Subset
+from torch.nn.utils.rnn import pad_sequence
 
 # for logging
 from logging import getLogger
@@ -28,6 +29,69 @@ class TableDataset(Dataset):
         LabeledData = namedtuple("LabeledData", ["x", "y"])
         return LabeledData(self.x[idx], self.y[idx])
 
+class VectorizedTextDataset(Dataset):
+    """学習済みのword2vecを使ったテキストデータ用のデータセットクラス."""
+
+    def __init__(self, data, label):
+        # NOTE: dataはすでにベクトル化されていることを想定
+        self.data = data
+        self.label = label
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        x = self.data[index]
+        y = self.label[index]
+        return torch.tensor(x, dtype=torch.float32), torch.tensor(y)
+
+def pad_collate(batch):
+    """バッチ内のサンプルの長さを揃えるためのcollate_fn (DataLoaderでバッチを取得する際に最初に呼ばれるメソッド)."""
+
+    (xs, ys) = zip(*batch)
+    # バッチ内の各サンプルの長さを配列に記録（文なので可変長）
+    x_lens = [len(x) for x in xs]
+    xs_pad = pad_sequence(xs, batch_first=True, padding_value=0)
+    # ysをtenosorのtupleからtensorにする
+    ys = torch.stack(ys)
+    return xs_pad, ys, x_lens
+
+def sent2tensor(sent, input_dim, word2idx, wv_matrix, device):
+    """
+    文 -> tensorへの変換
+    文中の各単語を埋め込み行列によってベクトルに変換する
+    
+    Args:
+        sent: list of str
+            tensorに変換するべき文
+        input_dim: int
+            RNNへの入力次元数(埋め込みベクトルの次元数)
+        word2idx: dict
+            単語 -> 単語idへの対応表
+        wv_matrix: list of list of float
+            単語idから埋め込みベクトルへの対応表(埋め込み行列)
+            実態は(語彙数, input_dim)と言う形状の2次元配列
+    Returns:
+        seq: list of list of float(torch.tensor)
+            各単語を埋め込み行列で変化したベクトルの列
+            形状は(文中の単語数, input_dim)という2次元配列
+    """
+    idx_seq = []
+    # 文中に現れる単語のIDの列をidx_seqに格納
+    for w in sent:
+        if w in word2idx:
+            idx = word2idx[w]
+        elif w.lower() in word2idx:
+            idx = word2idx[w.lower()]
+        # w が語彙になかった場合
+        else:
+            idx = wv_matrix.shape[0] - 1
+        idx_seq.append(idx)
+    seq = torch.zeros(len(idx_seq), input_dim).to(device)
+    # i番目の単語に対応するベクトルを埋め込み行列から取り出す
+    for i, w_idx in enumerate(idx_seq):
+        seq[i] = torch.tensor(wv_matrix[w_idx])
+    return seq
 
 class BalancedSubsetDataLoader(DataLoader):
     """ApricotでrDLMを作るためのサブデータセットのためのデータロードのクラス."""
@@ -93,13 +157,17 @@ def divide_train_repair(ori_train_dataset, num_fold=5, batch_size=16, dataset_ty
             repair = ori_train_dataset[list(ri)]
             train_ds = TensorDataset(train.x, train.y)
             repair_ds = TensorDataset(repair.x, repair.y)
-        # image datasetの場合
-        elif dataset_type == "image":
+        # image or text datasetの場合
+        elif dataset_type in ["image", "text"]:
             train_ds = Subset(ori_train_dataset, list(ti))
             repair_ds = Subset(ori_train_dataset, list(ri))
+        # dataloaderのバッチ取得時に呼ぶ関数の設定（textのみ設定）
+        collate_fn = None
+        if dataset_type == "text":
+            collate_fn = pad_collate
         # dataloaderの作成
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-        repair_loader = DataLoader(repair_ds, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        repair_loader = DataLoader(repair_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
         # 結果のlistに追加
         train_loader_list.append(train_loader)
         repair_loader_list.append(repair_loader)

@@ -1,5 +1,5 @@
-import os, sys, pickle
-from lib.dataset import divide_train_repair, TableDataset
+import os, sys, pickle, argparse
+from lib.dataset import divide_train_repair, TableDataset, VectorizedTextDataset, sent2tensor, pad_collate
 from torch.utils.data import DataLoader, TensorDataset
 from lib.model import train_model, select_model
 from lib.util import json2dict, dataset_type
@@ -34,11 +34,20 @@ def visualize_train_loss_fold(num_epochs, epoch_loss_list_list, save_path):
 
 
 if __name__ == "__main__":
+    # GPUが使えるかの設定
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # コマンドライン引数の設定
+    parser = argparse.ArgumentParser()
+    parser.add_argument("exp_dir", type=str)
+    parser.add_argument("--only_dataset", action="store_true") # datasetの処理があってることだけ確認したくてモデル訓練はまだどうでもいい時はこのフラグ設定する
+    args = parser.parse_args()
     # 実験のディレクトリと実験名を取得
-    exp_dir = os.path.dirname(sys.argv[1])
+    exp_dir = os.path.dirname(args.exp_dir)
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
     # log setting
     logger = set_exp_logging(exp_dir, exp_name)
+    # datasetの処理のみでモデル訓練は行わない時のフラグ
+    is_only_dataset = args.only_dataset
 
     # 設定用のjsonファイルをdictとしてロード
     # HACK: 共通しているので関数にまとめて自動化したい
@@ -53,6 +62,7 @@ if __name__ == "__main__":
 
     # tabular datasetの場合
     if dataset_type(task_name) == "tabular":
+        collate_fn = None
         # tabular dataset専用の項目
         train_repair_data_path = setting_dict["TRAIN-REPAIR_DATA_PATH"]
         test_data_path = setting_dict["TEST_DATA_PATH"]
@@ -63,6 +73,7 @@ if __name__ == "__main__":
 
     # image datasetの場合
     elif dataset_type(task_name) == "image":
+        collate_fn = None
         # ディレクトリ作成
         raw_data_dir = os.path.join(data_dir, "raw_data")
         os.makedirs(raw_data_dir, exist_ok=True)
@@ -103,12 +114,36 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"dataset {task_name} is not supported.")
 
+    elif dataset_type(task_name) == "text":
+        collate_fn = pad_collate
+        raw_data_path = setting_dict["RAW_DATA_PATH"]
+        word2vec_path = setting_dict["WORD2VEC_PATH"]
+        # データセットの辞書とword2vecをロード
+        with open(raw_data_path, "rb") as f:
+            data_dic = pickle.load(f)
+        with open(word2vec_path, "rb") as f:
+            word2vec_matrix = pickle.load(f)
+        y_train, y_test = data_dic["train_y"], data_dic["test_y"]
+        X_train, X_test = [], []
+        # X_trainをword2vecで構成
+        for x in data_dic["train_x"]:
+            input_tensor = sent2tensor(x, 300, data_dic["word_to_idx"], word2vec_matrix, device)
+            X_train.append(input_tensor)
+        # X_testをword2vecで構成
+        for x in data_dic["test_x"]:
+            input_tensor = sent2tensor(x, 300, data_dic["word_to_idx"], word2vec_matrix, device)
+            X_test.append(input_tensor)
+        train_repair_dataset = VectorizedTextDataset(X_train, y_train)
+        test_dataset = VectorizedTextDataset(X_test, y_test)
+    else:
+        raise ValueError(f"dataset {task_name} is not supported.")
+
     # train_repairをK-foldでtrainとrepairに分けて，dataloader型にする
     train_loader_list, repair_loader_list = divide_train_repair(
         train_repair_dataset, num_fold=num_fold, batch_size=batch_size, dataset_type=dataset_type(task_name)
     )
     # testもdataloader型にする
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     logger.info(
         f"train : repair : test = {len(train_loader_list[0].dataset)} : {len(repair_loader_list[0].dataset)} : {len(test_loader.dataset)}"
     )
@@ -133,6 +168,9 @@ if __name__ == "__main__":
     test_loader_save_path = os.path.join(data_save_dir, "test_loader.pt")
     torch.save(test_loader, test_loader_save_path)
     logger.info(f"saved test_loader in {test_loader_save_path}")
+
+    if is_only_dataset:
+        exit(0)
 
     # 各fold (train) に対してモデルを訓練し，各モデルを保存
     model_list = []

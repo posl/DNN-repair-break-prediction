@@ -1,0 +1,8 @@
+{
+    "TASK_NAME": "imdb",
+    "RAW_DATA_PATH": "/src/data/imdb/raw_data/processed_imdb.pkl",
+    "WORD2VEC_PATH": "/src/data/imdb/raw_data/wv_matrix_imdb.pkl",
+    "BATCH_SIZE": 128,
+    "NUM_EPOCHS": 100,
+    "NUM_FOLD": 5
+  }

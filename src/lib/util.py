@@ -47,6 +47,8 @@ def dataset_type(dataset):
         return "tabular"
     elif dataset in ["fm", "c10", "gtsrb"]:
         return "image"
+    elif dataset in ["imdb", "rtmr", "toxic"]:
+        return "text"
     else:
         raise ValueError(f"dataset {dataset} is not supported.")
 
