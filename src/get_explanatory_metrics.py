@@ -3,7 +3,7 @@ from collections import defaultdict
 import pandas as pd
 from lib.model import select_model
 from lib.explanatory_metrics import get_pcs, get_entropy, get_lps, get_loss
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -13,6 +13,7 @@ import seaborn as sns
 sns.set()
 
 if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # 実験のディレクトリと実験名を取得
     exp_dir = os.path.dirname(sys.argv[1])
     exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
@@ -58,6 +59,7 @@ if __name__ == "__main__":
         model = select_model(task_name=task_name)
         model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         model.load_state_dict(torch.load(model_path))
+        model.to(device)
         model.eval()
 
         # foldに対するdataloaderをロード
@@ -70,16 +72,31 @@ if __name__ == "__main__":
         for div_name, dataloader in zip(["train", "repair", "test"], [train_loader, repair_loader, test_loader]):
             # fold, division が決まるのでここでdataframe作る
             df = pd.DataFrame(columns=["pcs", "lps", "entropy", "loss"])
-            for x, y in dataloader.dataset:
-                row_dict = {}
-                out = model.predict(torch.unsqueeze(x, 0))
-                prob = out["prob"][0]
-                # probを使ったexplanatory metricsの計算
-                row_dict["pcs"] = get_pcs(prob)
-                row_dict["entropy"] = get_entropy(prob)
-                row_dict["lps"] = get_lps(prob, torch.tensor(y))
-                row_dict["loss"] = get_loss(prob, torch.tensor(y))
-                df = df.append(row_dict, ignore_index=True)
+            # text dataset以外. こちらは何故かバッチ処理せず1sampleごとにやってる
+            if dataset_type(task_name) != "text":
+                for x, y in dataloader.dataset:
+                    row_dict = {}
+                    out = model.predict(torch.unsqueeze(x, 0), device=device)
+                    prob = out["prob"][0].cpu()
+                    # probを使ったexplanatory metricsの計算
+                    row_dict["pcs"] = get_pcs(prob)
+                    row_dict["entropy"] = get_entropy(prob)
+                    row_dict["lps"] = get_lps(prob, torch.tensor(y))
+                    row_dict["loss"] = get_loss(prob, torch.tensor(y))
+                    df = df.append(row_dict, ignore_index=True)
+            # text datasetの場合はバッチ処理
+            else:
+                for x, y, x_lens in dataloader:
+                    out = model.predict(x=x, x_lens=x_lens, device=device)
+                    probs = out["prob"].cpu() # (batch_size, 2) の形状で予測確率を格納
+                    for i, prob in enumerate(probs):
+                        row_dict = {}
+                        # probを使ったexplanatory metricsの計算
+                        row_dict["pcs"] = get_pcs(prob)
+                        row_dict["entropy"] = get_entropy(prob)
+                        row_dict["lps"] = get_lps(prob, torch.tensor(y[i]))
+                        row_dict["loss"] = get_loss(prob, torch.tensor(y[i]))
+                        df = df.append(row_dict, ignore_index=True)
             # 保存先を指定してsaveする
             save_path = os.path.join(expmet_dir, f"{div_name}_fold{k+1}.csv")
             df.to_csv(save_path, index=False)
