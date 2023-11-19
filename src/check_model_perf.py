@@ -2,7 +2,7 @@ import os, sys
 from collections import defaultdict
 import pandas as pd
 from lib.model import select_model, eval_model
-from lib.util import json2dict
+from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     logger.info(f"Settings: {setting_dict}")
 
     task_name = setting_dict["TASK_NAME"]
-    target_column = setting_dict["TARGET_COLUMN"]
+    ds_type = dataset_type(task_name)
     num_epochs = setting_dict["NUM_EPOCHS"]
     batch_size = setting_dict["BATCH_SIZE"]
     num_fold = setting_dict["NUM_FOLD"]
@@ -114,9 +114,9 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
 
         # evaluation criteriaの計算
-        train_metrics = eval_model(model, train_loader)["metrics"]
-        repair_metrics = eval_model(model, repair_loader)["metrics"]
-        test_metrics = eval_model(model, test_loader)["metrics"]
+        train_metrics = eval_model(model, train_loader, ds_type)["metrics"]
+        repair_metrics = eval_model(model, repair_loader, ds_type)["metrics"]
+        test_metrics = eval_model(model, test_loader, ds_type)["metrics"]
 
         # メトリクスの記録
         train_metrics_dict = update_metrics_dict(train_metrics_dict, *train_metrics)

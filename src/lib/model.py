@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import numpy as np
 import time
 from collections import defaultdict
@@ -744,14 +745,62 @@ class C10Model(ImageModel):
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
 
+class TextModel(nn.Module):
+    """
+    テキストデータのためのNNの基底クラス.
+    共通のメソッドはここにまとめて，各データセットのモデルで上書きできるようにする.
+    """
 
-def train_model(model, dataloader, num_epochs):
+    def __init__(self, input_size, hidden_size, num_layers, bidirectional, num_class):
+        super().__init__()
+        self.input_dim = input_size
+        self.lstm1 = nn.LSTM(input_size, hidden_size, num_layers, bidirectional, batch_first=True)
+        self.dense1 = nn.Linear(hidden_size, num_class)
+        self.softmax = nn.LogSoftmax(dim=1)
+
+    def count_neurons_params(self):
+        """ニューロン数と学習できるパラメータ数を数える. 
+        NOTE: neuron数は多分必要ないのでパラメータ数だけ数える. 
+        しかしメソッド名が違うとエラーになりそうなので名前はこのままで."""
+        
+        num_params = 0
+        for name, param in self.named_parameters():
+            num_params += np.prod(param.shape)
+        return {"num_params": num_params}
+    
+    def forward(self, x, x_lens):
+        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        output, hn = self.lstm1(x_packed)
+        output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
+        output_dense = self.dense1(output_padded)
+        probs = self.softmax(output_dense)
+        probs = probs[torch.arange(probs.size(0)), output_lengths - 1, :]
+        return probs
+    
+    def predict(self, x, x_lens, device):
+        x = x.to(device)
+        prob = self.forward(x, x_lens)
+        pred = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred}
+
+class IMDBModel(TextModel):
+    def __init__(self):
+        super().__init__(input_size=300, hidden_size=128, num_layers=1, bidirectional=False, num_class=2)
+        # logger.info(self.count_neurons_params())
+
+class RTMRModel(TextModel):
+    def __init__(self):
+        super().__init__(input_size=300, hidden_size=128, num_layers=1, bidirectional=False, num_class=2)
+        # logger.info(self.count_neurons_params())
+
+def train_model(model, dataloader, num_epochs, dataset_type):
     """学習用の関数
 
     Args:
         model (nn.Module): 初期化済みのモデル.
         dataloader (DataLoader): 学習データのdataloader.
         num_epochs (int): エポック数
+        dataset_type (str): データセット種別の判別のため
 
     Returns:
         nn.Module: 学習したモデル
@@ -784,17 +833,32 @@ def train_model(model, dataloader, num_epochs):
         print("-------------")
         print("（train）")
         # dataloaderからミニバッチを取り出すループ
-        for x, y in dataloader:
-            # GPUが使えるならGPUにデータを送る
-            x, y = x.to(device), y.to(device)
-            out = model(x)
-            loss = criterion(out, y)
-            # バックプロパゲーション
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            # エポックごとのロスを記録
-            epoch_loss += loss.item()
+        if dataset_type != "text":
+            for x, y in dataloader:
+                # GPUが使えるならGPUにデータを送る
+                x = x.to(device)
+                y = y.to(device)
+                out = model(x)
+                loss = criterion(out, y)
+                # バックプロパゲーション
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                # エポックごとのロスを記録
+                epoch_loss += loss.item()
+        # text datasetの場合は可変長サンプルなので挙動が少し異なる
+        else:
+            for x, y, x_lens in dataloader:
+                x = x.to(device)
+                y = y.to(device)
+                out = model(x, x_lens)
+                loss = criterion(out, y)
+                # バックプロパゲーション
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                # エポックごとのロスを記録
+                epoch_loss += loss.item()
         # epochのphaseごとのlossと正解率
         t_epoch_finish = time.time()
         print("-------------")
@@ -804,12 +868,13 @@ def train_model(model, dataloader, num_epochs):
     return model, epoch_loss_list
 
 
-def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_location=None, device="cpu"):
+def sm_correctness(model, dataloader, dataset_type, is_repair=False, hvals=None, neuron_location=None, device="cpu"):
     """各データに対して, 予測が分類すべきラベルと合っているかどうか (あってたら1, ちがったら0) を表す配列を返す.
 
     Args:
         model (nn.Module): 学習済みの, 評価対象のモデル.
         dataloader (DataLoader): 評価に使いたいデータセットのdataloader.
+        dataset_type (str)
         is_repair (bool): repair後の重みを使って予測するかどうか. ここをTrueにした場合は必ずこの後ろの2つの引数も指定しなければならない.
         hvals (list of float): 修正後のニューロンの値のリスト. indexは第三引数のneuron_locationと対応.
         neuron_location (list of tuple(int, int)): 修正するニューロンの位置(レイヤ番号, ニューロン番号)を表すタプルのリスト.
@@ -820,34 +885,47 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
     # 予測結果と真のラベルの配列
     y_true = []
     y_pred = []
-    # # GPUが使えるかを確認
+    # GPUが使えるかを確認
     # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # logger.info(f"device: {device}")
     # ネットワークをデバイスへ
-    # model.to(device)
+    model.to(device)
     # モデルを推論モードに
-    # model.eval()
+    model.eval()
     # ネットワークがある程度固定であれば、高速化させる
     torch.backends.cudnn.benchmark = True
 
     # 最終的に全バッチまとめる
     y_true, y_pred, correctness_arr = [], [], []
     # データセットの各バッチを予測
-    for batch_idx, (data, labels) in enumerate(dataloader):
-        data = data.to(device)
-        if not is_repair:
-            # 修正前の重みで予測.
-            out = model.predict(data, device=device)
-        else:
-            # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
-            assert (
-                hvals is not None and neuron_location is not None
-            ), "despite is_repair=True, hvals and neuron_location are None!!!"
-            # 修正後の重みで予測.
-            out = model.predict_with_repair(data, hvals, neuron_location=neuron_location, device=device)
-        pred = out["pred"].cpu()
-        y_true.extend(labels.cpu())
-        y_pred.extend(pred)
+    if dataset_type != "text":
+        for data, labels in dataloader:
+            data = data.to(device)
+            if not is_repair:
+                # 修正前の重みで予測.
+                out = model.predict(data, device=device)
+            else:
+                # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
+                assert (
+                    hvals is not None and neuron_location is not None
+                ), "despite is_repair=True, hvals and neuron_location are None!!!"
+                # 修正後の重みで予測.
+                out = model.predict_with_repair(data, hvals, neuron_location=neuron_location, device=device)
+            pred = out["pred"].cpu()
+            y_true.extend(labels.cpu())
+            y_pred.extend(pred)
+    else: # text datasetの場合
+        for data, labels, x_lens in dataloader:
+            data = data.to(device)
+            if not is_repair:
+                # 修正前の重みで予測.
+                out = model.predict(data, x_lens, device=device)
+            else:
+                # TODO:
+                pass
+            pred = out["pred"].cpu()
+            y_true.extend(labels.cpu())
+            y_pred.extend(pred)
     # numpy配列にする
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
@@ -855,12 +933,13 @@ def sm_correctness(model, dataloader, is_repair=False, hvals=None, neuron_locati
     return y_true, y_pred, correctness_arr
 
 
-def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=None, is_binary=True, device="cpu"):
+def eval_model(model, dataloader, dataset_type, is_repair=False, hvals=None, neuron_location=None, is_binary=True, device="cpu"):
     """モデルの評価用の関数.
 
     Args:
         model (nn.Module): 学習済みの, 評価対象のモデル.
         dataloader (DataLoader): 評価に使いたいデータセットのdataloader.
+        dataset_type (str)
         is_repair (bool): repair後の重みを使って予測するかどうか. ここをTrueにした場合は必ずこの後ろの2つの引数も指定しなければならない.
         hvals (list of float): 修正後のニューロンの値のリスト. indexは第三引数のneuron_locationと対応.
         neuron_location (list of tuple(int, int)): 修正するニューロンの位置(レイヤ番号, ニューロン番号)を表すタプルのリスト.
@@ -870,7 +949,7 @@ def eval_model(model, dataloader, is_repair=False, hvals=None, neuron_location=N
         *float: dataloaderでモデルを評価した各種メトリクス.
     """
     # correctnessを評価
-    y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, is_repair, hvals, neuron_location, device)
+    y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, dataset_type, is_repair, hvals, neuron_location, device)
     average = "binary" if is_binary else "macro"
     # 各評価指標を算出
     acc = accuracy_score(y_true, y_pred)
@@ -911,6 +990,10 @@ def select_model(task_name):
         return C10Model()
     elif task_name == "gtsrb":
         return GTSRBModel()
+    elif task_name == "imdb":
+        return IMDBModel()
+    elif task_name == "rtmr":
+        return RTMRModel()
     else:
         raise NotImplementedError
 

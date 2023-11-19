@@ -3,6 +3,6 @@
     "RAW_DATA_PATH": "/src/data/rtmr/raw_data/processed_rtmr.pkl",
     "WORD2VEC_PATH": "/src/data/rtmr/raw_data/wv_matrix_rtmr.pkl",
     "BATCH_SIZE": 128,
-    "NUM_EPOCHS": 100,
+    "NUM_EPOCHS": 50,
     "NUM_FOLD": 5
   }
