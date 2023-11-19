@@ -272,6 +272,7 @@ class ImageModel(nn.Module):
         x = x.to(device)
         """バッチの予測を実行"""
         out = self.forward(x)
+        # NOTE: outが(batch_size, num_class)の形状なのでdim=1でいい
         prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
@@ -756,7 +757,6 @@ class TextModel(nn.Module):
         self.input_dim = input_size
         self.lstm1 = nn.LSTM(input_size, hidden_size, num_layers, bidirectional, batch_first=True)
         self.dense1 = nn.Linear(hidden_size, num_class)
-        self.softmax = nn.LogSoftmax(dim=1)
 
     def count_neurons_params(self):
         """ニューロン数と学習できるパラメータ数を数える. 
@@ -773,13 +773,15 @@ class TextModel(nn.Module):
         output, hn = self.lstm1(x_packed)
         output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
         output_dense = self.dense1(output_padded)
-        probs = self.softmax(output_dense)
-        probs = probs[torch.arange(probs.size(0)), output_lengths - 1, :]
-        return probs
+        # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
+        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        return output_dense
     
     def predict(self, x, x_lens, device):
         x = x.to(device)
-        prob = self.forward(x, x_lens)
+        out = self.forward(x, x_lens)
+        # dense層の出力をsoftmaxで変換
+        prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
