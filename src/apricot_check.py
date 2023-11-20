@@ -6,6 +6,7 @@ warnings.filterwarnings("ignore")
 from lib.log import set_exp_logging
 from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.model import train_model, eval_model, select_model
+from lib.dataset import pad_collate
 from src_apricot.apricot_lib import setWeights
 
 import torch
@@ -43,11 +44,13 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
+    ds_type = dataset_type(task_name)
+    collate_fn = pad_collate if ds_type == "text" else None
     num_fold = setting_dict["NUM_FOLD"]
 
     # ラベルがバイナリか否か
     is_binary = False
-    if (dataset_type(task_name) == "tabular") or (dataset_type(task_name) == "text"):
+    if (ds_type == "tabular") or (ds_type == "text"):
         is_binary = True
 
     # モデルとデータの読み込み先のディレクトリ
@@ -68,9 +71,9 @@ if __name__ == "__main__":
     for k in range(num_fold):
         # foldに対するdataloaderをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = fix_dataloader(torch.load(train_data_path))
+        train_loader = fix_dataloader(torch.load(train_data_path), collate_fn=collate_fn)
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        repair_loader = fix_dataloader(torch.load(repair_data_path))
+        repair_loader = fix_dataloader(torch.load(repair_data_path), collate_fn=collate_fn)
 
         for div, dataloader in zip(["train", "repair", "test"], [train_loader, repair_loader, test_loader]):
             logger.info(f"processing fold {k} {div} set...")
@@ -104,6 +107,7 @@ if __name__ == "__main__":
                 ret_dict = eval_model(
                     model=model,
                     dataloader=dataloader,
+                    dataset_type=dataset_type(task_name),
                     is_binary=is_binary,
                     device=device,
                 )
