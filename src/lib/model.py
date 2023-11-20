@@ -785,6 +785,50 @@ class TextModel(nn.Module):
         pred = torch.argmax(prob, dim=1)
         return {"prob": prob, "pred": pred}
 
+    def get_layer_distribution(self, x, x_lens, target_lid=1):
+        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        output, hn = self.lstm1(x_packed)
+        output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
+        if target_lid == 0:
+            return output_padded.detach().cpu().numpy(), output_lengths.detach().cpu().numpy()
+        output_dense = self.dense1(output_padded)
+        # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
+        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        if target_lid == 1:
+            return output_dense.detach().cpu().numpy(), None
+        
+    def predict_with_intervention(self, x, x_lens, hval, target_lid=None, target_nid=None, device="cpu"):
+        x = x.to(device)
+        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        output, hn = self.lstm1(x_packed)
+        output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
+        output_dense = self.dense1(output_padded)
+        # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
+        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        output_dense[:, target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+        # dense層の出力をsoftmaxで変換
+        prob = nn.Softmax(dim=1)(output_dense)
+        pred = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred}
+
+    def predict_with_repair(self, x, x_lens, hvals, neuron_location=None, device="cpu"):
+        # target_lid固定なので, target_nidのみの列になっていることを確認
+        assert neuron_location.ndim == 1, "neuron_location must be 1-dim."
+        x = x.to(device)
+        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        output, hn = self.lstm1(x_packed)
+        output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
+        output_dense = self.dense1(output_padded)
+        # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
+        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        for hval, target_nid in zip(hvals, neuron_location):
+            output_dense[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+        # dense層の出力をsoftmaxで変換
+        prob = nn.Softmax(dim=1)(output_dense)
+        pred = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred}
+
+
 class IMDBModel(TextModel):
     def __init__(self):
         super().__init__(input_size=300, hidden_size=128, num_layers=1, bidirectional=False, num_class=2)
@@ -923,8 +967,8 @@ def sm_correctness(model, dataloader, dataset_type, is_repair=False, hvals=None,
                 # 修正前の重みで予測.
                 out = model.predict(data, x_lens, device=device)
             else:
-                # TODO:
-                pass
+                out = model.predict_with_repair(data, x_lens, hvals, neuron_location=neuron_location, device=device)
+
             pred = out["pred"].cpu()
             y_true.extend(labels.cpu())
             y_pred.extend(pred)

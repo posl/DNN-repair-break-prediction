@@ -53,7 +53,7 @@ def dataset_type(dataset):
         raise ValueError(f"dataset {dataset} is not supported.")
 
 
-def fix_dataloader(dataloader):
+def fix_dataloader(dataloader, collate_fn=None):
     """入力のdataloaderに対し, バッチのランダム性を排除したdataloaderを作成する.
 
     Args:
@@ -63,7 +63,7 @@ def fix_dataloader(dataloader):
         torch.DataLoader: 入力のdataloaderのバッチの順番を固定したdataloader (実行のたびに同じデータを返す).
     """
     return torch.utils.data.DataLoader(
-        dataset=dataloader.dataset, batch_size=dataloader.batch_size, shuffle=False, num_workers=2
+        dataset=dataloader.dataset, batch_size=dataloader.batch_size, shuffle=False, collate_fn=collate_fn
     )
 
 def keras_lid_to_torch_layers(task_name, model):

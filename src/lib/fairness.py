@@ -234,7 +234,7 @@ def calc_fairness_ub(model, dataloader, sens_idx, hvals, neuron_location, sens_v
     return np.mean(inst_diff_list)
 
 
-def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals, acc_org, device):
+def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hvals, acc_org, device, ds_type):
     acc_diff_list = []
 
     # hvalの各要素に対するループ
@@ -242,11 +242,16 @@ def calc_acc_average_causal_effect(model, dataloader, target_lid, target_nid, hv
         sum_diff = 0.0
         acc_tmp = 0  # acc計算用
         # メモリ不足対策のためバッチに分けてaccを計算してからまとめる
-        for batch_idx, (data, labels) in enumerate(dataloader):
-            data = data.to(device)
-            ret_dicts = model.predict_with_intervention(data, hval, target_lid, target_nid, device)
+        for batch_idx, batch in enumerate(dataloader):
+            data = batch[0].to(device)
+            labels = batch[1].to(device)
+            if ds_type != "text":
+                ret_dicts = model.predict_with_intervention(data, hval, target_lid, target_nid, device)
+            else:
+                data_lens = batch[2]
+                ret_dicts = model.predict_with_intervention(data, data_lens, hval, target_lid, target_nid, device)
             preds = ret_dicts["pred"].cpu()
-            num_corr = sum(preds == labels)
+            num_corr = sum(preds == labels.cpu())
             acc_tmp += num_corr / len(preds)
         # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
         acc_tmp /= len(dataloader)

@@ -1,0 +1,8 @@
+{
+    "TRAIN_SETTING_PATH": "rtmr-training-setting1.json", 
+    "NUM_STEPS": 32,
+    "TARGET_LAYER": "",
+    "TARGET_NEURON": "",
+    "REPAIR_RATIO": 2,
+    "PSO_SETTING_PATH": "pso-setting3.json"
+}

@@ -4,6 +4,7 @@ sys.path.append(os.pardir)
 from src.lib.model import select_model, eval_model
 from src.lib.util import json2dict, dataset_type, fix_dataloader
 from src.lib.log import set_exp_logging
+from src.lib.dataset import pad_collate
 from src.lib.fairness import eval_independence_fairness
 import numpy as np
 
@@ -127,6 +128,8 @@ if __name__ == "__main__":
     logger.info(f"TRAIN Settings: {train_setting_dict}")
     num_fold = train_setting_dict["NUM_FOLD"]
     task_name = train_setting_dict["TASK_NAME"]
+    ds_type = dataset_type(task_name)
+    collate_fn = None if ds_type != "text" else pad_collate
 
     # ラベルがバイナリか否か
     is_binary = False
@@ -171,11 +174,11 @@ if __name__ == "__main__":
 
         # train setをロード
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = fix_dataloader(torch.load(train_data_path))
+        train_loader = fix_dataloader(torch.load(train_data_path), collate_fn=collate_fn)
 
         # repair setをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        repair_loader = fix_dataloader(torch.load(repair_data_path))
+        repair_loader = fix_dataloader(torch.load(repair_data_path), collate_fn=collate_fn)
 
         # fl_scoreをロード
         # flscoreに関してはpso関係ないので継承するのであれば継承先のものを使う
@@ -233,6 +236,7 @@ if __name__ == "__main__":
                         ret_dict = eval_model(
                             model=model,
                             dataloader=dataloader,
+                            dataset_type=ds_type,
                             is_repair=is_repair,
                             hvals=hvals,
                             neuron_location=neuron_location,
@@ -323,8 +327,8 @@ if __name__ == "__main__":
 
             # 修正前にあってたかどうかと，5回の修正それぞれの後で正しく予測できた回数の合計をまとめたDataFrameを作成
             df = pd.DataFrame({"sm_corr_bef": is_corr_bef, "sm_corr_aft_sum": is_corr_aft})
-            print(df[df["sm_corr_bef"] == 0]["sm_corr_aft_sum"].value_counts())
-            print(df[df["sm_corr_bef"] == 1]["sm_corr_aft_sum"].value_counts())
+            # print(df[df["sm_corr_bef"] == 0]["sm_corr_aft_sum"].value_counts())
+            # print(df[df["sm_corr_bef"] == 1]["sm_corr_aft_sum"].value_counts())
             # repaired, brokenの真偽を決定
             # df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] == 5)  # 厳し目の決定方法
             df["repaired"] = (df["sm_corr_bef"] == 0) & (df["sm_corr_aft_sum"] >= 1)  # ゆる目の決定方法

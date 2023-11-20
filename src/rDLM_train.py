@@ -6,6 +6,7 @@ warnings.filterwarnings("ignore")
 from lib.log import set_exp_logging
 from lib.util import json2dict, dataset_type
 from lib.model import train_model, select_model
+from lib.dataset import pad_collate
 from lib.dataset import BalancedSubsetDataLoader
 
 import torch
@@ -36,6 +37,7 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
+    ds_type = dataset_type(task_name)
     num_epochs = setting_dict["NUM_EPOCHS"]
     num_epochs_rdlm = num_epochs // 4  # rDLM訓練用のエポック数
     batch_size = setting_dict["BATCH_SIZE"]
@@ -56,11 +58,15 @@ if __name__ == "__main__":
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
         train_loader = torch.load(train_data_path)
 
+        collate_fn = None
         # ラベルの頻度を集計
         if dataset_type(task_name) == "tabular":
             labels = np.array(train_loader.dataset)[:, 1]  # ここでwarning出るけど動くからOK
         elif dataset_type(task_name) == "image":
             labels = np.array([d[1] for d in train_loader.dataset])
+        elif dataset_type(task_name) == "text":
+            labels = np.array([d[1].item() for d in train_loader.dataset])
+            collate_fn = pad_collate
         _, cnts = np.unique(labels, return_counts=True)
         logger.info(f"cnts={cnts}")
         # 最も頻度が少ないラベルのサンプル数の半分を，reduced Datasetを作る際の各ラベルからのサンプル数とする
@@ -87,13 +93,13 @@ if __name__ == "__main__":
                 # オリジナルのデータセットから各ラベル num_samples_per_class だけサンプリングして新たなデータセットを作成
                 # NOTE: 各ラベルのサンプリングにランダム性があるためrDLMごとに異なるデータセットが作られる
                 balanced_subset_dataloader = BalancedSubsetDataLoader(
-                    train_loader, num_samples_per_class, batch_size=batch_size, shuffle=True
+                    train_loader, num_samples_per_class, batch_size=batch_size, shuffle=True, collate_fn=collate_fn
                 )
                 logger.info(f"reduced dataset size={len(balanced_subset_dataloader.dataset)}")
 
                 # 各rDLMを訓練して保存する
                 trained_rdlm, epoch_loss_list = train_model(
-                    model=model, dataloader=balanced_subset_dataloader, num_epochs=num_epochs_rdlm
+                    model=model, dataloader=balanced_subset_dataloader, num_epochs=num_epochs_rdlm, dataset_type=ds_type
                 )
                 logger.info(f"final loss={epoch_loss_list[-1]}")
                 torch.save(trained_rdlm.state_dict(), rdlm_path)

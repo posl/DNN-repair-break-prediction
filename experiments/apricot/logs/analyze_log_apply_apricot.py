@@ -14,6 +14,8 @@ if __name__ == "__main__":
         "fm": 5,
         "c10": 5,
         "gtsrb": 5,
+        "imdb": 5,
+        "rtmr": 5
     }
     num_folds = num_folds_from_ds[dataset]
     log_file = f"/src/experiments/apricot/logs/{dataset}-apply-apricot-setting1.log"

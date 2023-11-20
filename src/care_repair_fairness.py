@@ -2,6 +2,7 @@ import os, sys, time, re
 
 from lib.model import select_model
 from lib.util import json2dict, dataset_type, fix_dataloader
+from lib.dataset import pad_collate
 from lib.log import set_exp_logging
 from lib.fairness import calc_fairness_ub
 import numpy as np
@@ -65,7 +66,7 @@ def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repai
     return result
 
 
-def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, device):
+def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, device, ds_type):
     """PSOの目的関数 (for image dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
     公平性でなくaccのみを考慮する.
 
@@ -84,11 +85,16 @@ def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, d
     # 各粒子に対してCAREのPSOの目的関数の値を算出し, resultにappendする
     for p in particles:
         acc_tmp = 0
-        for batch_idx, (data, labels) in enumerate(dataloader):
-            data = data.to(device)
-            ret_dicts = model.predict_with_repair(data, hvals=p, neuron_location=repaired_positions, device=device)
+        for batch_idx, batch in enumerate(dataloader):
+            if ds_type != "text":
+                data, labels = batch[0].to(device), batch[1].to(device)
+                ret_dicts = model.predict_with_repair(data, hvals=p, neuron_location=repaired_positions, device=device)
+            else:
+                data, labels = batch[0].to(device), batch[1].to(device)
+                data_lens = batch[2]
+                ret_dicts = model.predict_with_repair(data, data_lens, hvals=p, neuron_location=repaired_positions, device=device)
             preds = ret_dicts["pred"].cpu()
-            num_corr = sum(preds == labels)
+            num_corr = sum(preds == labels.cpu())
             acc_tmp += num_corr / len(preds)
         # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
         acc_tmp /= len(dataloader)
@@ -145,6 +151,8 @@ if __name__ == "__main__":
     num_fold = train_setting_dict["NUM_FOLD"]
     task_name = train_setting_dict["TASK_NAME"]
     batch_size = train_setting_dict["BATCH_SIZE"]
+    ds_type = dataset_type(task_name)
+    collate_fn = pad_collate if ds_type == "text" else None
 
     # fairnessの計算のための情報をパース
     if (dataset_type(task_name) is "tabular") and TABULAR_FAIRNESS_SW:
@@ -193,15 +201,20 @@ if __name__ == "__main__":
         repair_loader = torch.load(repair_data_path)
         repair_ds = repair_loader.dataset
         # repair前後の予測確認のために用いるshuffleなしのdataloader
-        check_loader = fix_dataloader(repair_loader)
+        check_loader = fix_dataloader(repair_loader, collate_fn=collate_fn)
 
         # 元のmodelのcheck_loaderに対するaccuracyを計算
         total_corr = 0  # acc計算用
         org_correctness = []  # 予測の正解確認用
         # repair_loaderからバッチを読み込み
-        for batch_idx, (data, labels) in enumerate(check_loader):
-            data, labels = data.to(device), labels.to(device)
-            org_preds = model.predict(data, device=device)["pred"]
+        for batch_idx, batch in enumerate(check_loader):
+            if ds_type != "text":
+                data, labels = batch[0].to(device), batch[1].to(device)
+                org_preds = model.predict(data, device=device)["pred"]
+            else:
+                data, labels = batch[0].to(device), batch[1].to(device)
+                data_lens = batch[2]
+                org_preds = model.predict(data, data_lens, device=device)["pred"]
             # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
             org_correctness_tmp = (org_preds.cpu() == labels.cpu()).tolist()
             # 全体の正解配列に追加
@@ -277,6 +290,7 @@ if __name__ == "__main__":
                     "repaired_positions": repaired_positions,
                     "device": device,
                     "acc_org": acc_org,
+                    "ds_type": ds_type,
                 }
                 # Run optimization
                 best_cost, best_pos = optimizer.optimize(pso_fitness_acc, iters=pso_iters, **obj_args)
@@ -292,11 +306,18 @@ if __name__ == "__main__":
             # best_posがoriginalの予測をどれくらい変更するか？をログ出力
             aft_correctness = []  # 予測の正解確認用
             # best_posをhvalsにセットして予測を実行
-            for batch_idx, (data, labels) in enumerate(check_loader):
-                data = data.to(device)
-                ret_dicts = model.predict_with_repair(
-                    data, hvals=best_pos, neuron_location=repaired_positions, device=device
-                )
+            for batch_idx, batch in enumerate(check_loader):
+                if ds_type != "text":
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    ret_dicts = model.predict_with_repair(
+                        data, hvals=best_pos, neuron_location=repaired_positions, device=device
+                    )
+                else:
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    data_lens = batch[2]
+                    ret_dicts = model.predict_with_repair(
+                        data, data_lens, hvals=best_pos, neuron_location=repaired_positions, device=device
+                    )
                 preds = ret_dicts["pred"].cpu()
                 # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
                 aft_correctness_tmp = (preds.cpu() == labels.cpu()).tolist()

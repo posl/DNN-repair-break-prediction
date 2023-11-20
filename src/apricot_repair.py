@@ -37,6 +37,7 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
+    ds_type = dataset_type(task_name)
     batch_size = setting_dict["BATCH_SIZE"]
     num_fold = setting_dict["NUM_FOLD"]
 
@@ -45,12 +46,15 @@ if __name__ == "__main__":
     model_dir = f"/src/models/{task_name}/{exp_name}"
 
     # 分類クラス数
-    if dataset_type(task_name) == "tabular":
+    if ds_type == "tabular":
         is_binary = True
         post_train_epoch = 20
-    elif dataset_type(task_name) == "image":
+    elif ds_type == "image":
         is_binary = False
         post_train_epoch = 5
+    elif ds_type == "text":
+        is_binary = True
+        post_train_epoch = 20
 
     # GPUが使えるかを確認
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -98,7 +102,7 @@ if __name__ == "__main__":
             # actual process
             # ===================================
             logger.info("starting Apricot actual process...")
-            base_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][
+            base_acc = eval_model(idlm, repair_loader, ds_type, is_binary=is_binary, device=device)["metrics"][
                 0
             ]  # 最後にimprovementを表示したいのでここでbaseのaccを保存しておく
             best_acc = base_acc  # 暫定的なbest_acc
@@ -114,13 +118,23 @@ if __name__ == "__main__":
 
             # train loaderからバッチを取り出して処理を実行
             num_batch = len(train_loader)
-            for b_idx, (x, x_class) in enumerate(train_loader):
-                x, x_class = x.to(device), x_class.to(device)
+            for b_idx, batch in enumerate(train_loader):
+                if ds_type == "text":
+                    x, x_class = batch[0].to(device), batch[1].to(device)
+                    x_lens = batch[2]
+                else:
+                    x, x_class = batch[0].to(device), batch[1].to(device)
                 with torch.no_grad():
-                    yOrigin = torch.argmax(idlm(x), dim=1)  # バッチの各サンプルに対する予測結果. 形状は(batch_size, )
-                    ySubList = [
-                        torch.argmax(rdlm(x), dim=1) for rdlm in rdlm_list
-                    ]  # 各rDLMのバッチの各サンプルに対する予測結果. 形状は(rdlm_num, batch_size).
+                    if ds_type == "text":
+                        yOrigin = torch.argmax(idlm(x, x_lens), dim=1)  # バッチの各サンプルに対する予測結果. 形状は(batch_size, )
+                        ySubList = [
+                            torch.argmax(rdlm(x, x_lens), dim=1) for rdlm in rdlm_list
+                        ]  # 各rDLMのバッチの各サンプルに対する予測結果. 形状は(rdlm_num, batch_size).
+                    else:
+                        yOrigin = torch.argmax(idlm(x), dim=1)  # バッチの各サンプルに対する予測結果. 形状は(batch_size, )
+                        ySubList = [
+                            torch.argmax(rdlm(x), dim=1) for rdlm in rdlm_list
+                        ]  # 各rDLMのバッチの各サンプルに対する予測結果. 形状は(rdlm_num, batch_size).
 
                     # バッチ内の各サンプルに対して実行
                     for i_idx, (_, y) in enumerate(zip(x, x_class)):
@@ -163,7 +177,7 @@ if __name__ == "__main__":
                             setWeights(idlm, baseWeights)
 
                 # trainに使ってないデータセットでaccを確認
-                curr_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, ds_type, is_binary=is_binary, device=device)["metrics"][0]
 
                 # b_idxのバッチでadjust後にaccが向上した場合
                 if best_acc < curr_acc:
@@ -186,9 +200,9 @@ if __name__ == "__main__":
                     f"batch {b_idx} (/{num_batch}) done, last improvement {b_idx-last_improvement} batches ago."
                 )
                 # 短いエポックで再度訓練する
-                train_model(idlm, train_loader, num_epochs=post_train_epoch)
+                train_model(idlm, train_loader, num_epochs=post_train_epoch, dataset_type=ds_type)
                 # 再びaccを確認
-                curr_acc = eval_model(idlm, repair_loader, is_binary=is_binary, device=device)["metrics"][0]
+                curr_acc = eval_model(idlm, repair_loader, ds_type,is_binary=is_binary, device=device)["metrics"][0]
                 logger.info(f"new accuracy post training: {curr_acc}")
 
             # 時間計測 (repごとに計測)
