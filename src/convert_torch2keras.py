@@ -344,3 +344,10 @@ if __name__ == "__main__":
                 save_path = os.path.join(save_dir, "keras_model_fold-{}.h5".format(k))
                 keras_model.save(save_path)
                 logger.info(f"keras_model is saved to {save_path}")
+
+    elif dataset_type == "text":
+        # TODO:
+        pass
+
+    else:
+        raise ValueError(f"dataset_type must be one of 'tabular', 'image', 'text'.")
