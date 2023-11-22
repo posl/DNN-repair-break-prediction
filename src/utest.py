@@ -28,6 +28,12 @@ def get_df(method, dataset, rb):
     return df
 
 def judge_test_res(p_value, d_cliff):
+    sign = ""
+    if d_cliff > 0:
+        sign = "(+) "
+    elif d_cliff < 0:
+        sign = "(-) "
+    d_cliff = np.abs(d_cliff)
     # 統計結果の判断基準
     # 有意水準を設定
     sig_005 = 0.05
@@ -54,7 +60,7 @@ def judge_test_res(p_value, d_cliff):
     else:
         eff = "neg."
     print(eff + sig)
-    return sig, eff
+    return sig, eff, sign
 
 if __name__ == "__main__":
     rb = sys.argv[1]
@@ -70,10 +76,14 @@ if __name__ == "__main__":
 
     # 結果を入れるarr
     res_arr = []
+    res_arr_tex = [] # tex用
+
+    alternative = "two-sided"
 
 
     for i, dataset in enumerate(datasets):
         res_arr_ds = []
+        res_arr_ds_tex = []
         for method in methods:
             print(f"{method}, {dataset}\n==========================")
             # FIXME: 一時的なif
@@ -89,15 +99,25 @@ if __name__ == "__main__":
             for exp_col in exp_cols:
                 print(f"test for exp_col: {exp_col}")
                 group_t, group_f = df_t[exp_col], df_f[exp_col]
-                statistic, p_value = stats.mannwhitneyu(group_t, group_f, alternative="greater")
+                statistic, p_value = stats.mannwhitneyu(group_t, group_f, alternative=alternative)
                 # 効果量の算出
-                d_cliff = - (2*statistic/(len(group_t)*len(group_f)) - 1)
-                d_cliff = np.abs(d_cliff)
-                sig, eff = judge_test_res(p_value, d_cliff)
-                res_arr_ds.append(eff + sig)
+                d_cliff = 2*statistic/(len(group_t)*len(group_f)) - 1
+                sig, eff, sign = judge_test_res(p_value, d_cliff)
+                res_arr_ds.append(sign + eff + sig)
+                # tex用の処理
+                if sign == "(+) ":
+                    color = "green"
+                elif sign == "(-) ":
+                    color = "red"
+                else:
+                    color = "white"
+                res_arr_ds_tex.append(f"\\textcolor{{{color}}}{{{eff + sig}}}")
         res_arr.append(res_arr_ds)
+        res_arr_tex.append(res_arr_ds_tex)
     # CSVファイルへの書き込み
-    file_path = f"mannwhitneyu_{rb}.csv"
-    with open(file_path, 'w', newline='', encoding='utf-8') as csv_file:
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerows(res_arr)
+    res_path = f"mannwhitneyu_{rb}_{alternative}.csv"
+    res_path_tex = f"mannwhitneyu_{rb}_{alternative}_tex.csv"
+    for file_path, arr in zip([res_path, res_path_tex], [res_arr, res_arr_tex]):
+        with open(file_path, 'w', newline='', encoding='utf-8') as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerows(arr)
