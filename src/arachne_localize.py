@@ -18,6 +18,7 @@ from keras.layers import Input
 from sklearn.preprocessing import Normalizer
 from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.log import set_exp_logging
+from lib.dataset import pad_collate
 from src_arachne.utils import model_util as model_utils
 import torch
 import matplotlib.pyplot as plt
@@ -52,13 +53,17 @@ def get_target_weights(model):
     target_weights = {}  # key = layer index (int), value: [weight value, layer name]
 
     for i, layer in enumerate(model.layers):
-        # 各レイヤが対象となるレイヤ名のパターンにマッチするかを判定P
-        if is_target(layer.__class__.__name__, targeting_clsname_pattns):
+        # 各レイヤが対象となるレイヤ名のパターンにマッチするかを判定
+        lname = layer.__class__.__name__
+        if is_target(lname, targeting_clsname_pattns):
             # NOTE: Denseの場合は重みとバイアスのペアで返ってくる
             weights = layer.get_weights()
             if len(weights):  # has weights
-                # TODO: Dense層以外にも対応 (Conv2Dの場合は一緒でいいらしい)
-                target_weights[i] = [weights[0], layer.__class__.__name__]
+                if model_utils.is_FC(lname) or model_utils.is_C2D(lname):
+                    target_weights[i] = [weights[0], lname]
+                elif model_utils.is_LSTM(lname):
+                    # NOTE: biasがTrueの場合は元の実装通りweights[:-1]にしないといけないけどFalseにしてるので無視
+                    target_weights[i] = [weights, lname]
     return target_weights
 
 
@@ -284,7 +289,6 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
             logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
             ############ GL end #########
 
-        # TODO: Conv2D層の場合
         elif model_utils.is_C2D(lname):
             ############ FI begin #########
             is_channel_first = layer_config["data_format"] == "channels_first"
@@ -502,6 +506,7 @@ if __name__ == "__main__":
     setting_dict = json2dict(sys.argv[1])
     logger.info(f"Settings: {setting_dict}")
     task_name = setting_dict["TASK_NAME"]
+    collate_fn = None if dataset_type(task_name) != "text" else pad_collate
     # target_column = setting_dict["TARGET_COLUMN"]
     num_fold = setting_dict["NUM_FOLD"]
 
@@ -522,7 +527,7 @@ if __name__ == "__main__":
         # repair loaderをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = torch.load(repair_data_path)
-        fixed_repair_loader = fix_dataloader(repair_loader)  # 順番fix ver.
+        fixed_repair_loader = fix_dataloader(repair_loader, collate_fn=collate_fn)  # 順番fix ver.
         repair_ds = repair_loader.dataset  # HACK: これはメモリ食うのでなんとかした方がいいかも. 画像データでも問題なければそのままで.
         # 学習済みモデルをロード (keras)
         model = load_model(os.path.join(model_dir, f"keras_model_fold-{k}.h5"))
@@ -576,6 +581,38 @@ if __name__ == "__main__":
             # print(sum(correct_predictions), len(correct_predictions))
 
         # TODO: for text dataset
+        elif dataset_type(task_name) == "text":
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            loss_fn = "binary_crossentropy"
+            model.compile(loss=loss_fn, optimizer="adam", metrics=["accuracy"])  # これがないと予測できない(エラーになる)
+            # repair_loaderを使ってバッチで予測
+            pred_labels = []  # 予測ラベルの配列
+            correct_predictions = []  # あってたかどうかの配列
+            X_repair, y_repair = [], []
+            for batch_idx, (data, labels, data_lens) in enumerate(fixed_repair_loader):
+                data, labels = data.to(device), labels.to(device)
+                # data, labelsをnumpyに変換
+                data, labels = (
+                    data.detach().cpu().numpy().copy(),
+                    labels.detach().cpu().numpy().copy(),
+                )
+                pred_scores_seqs = model.predict(data, verbose=1)
+                pred_scores = pred_scores_seqs[np.arange(pred_scores_seqs.shape[0]), np.array(data_lens) - 1, :]
+                pred_labels_tmp = np.argmax(pred_scores, axis=1)
+                # 全体の予測ラベルの配列に追加
+                pred_labels.extend(pred_labels_tmp)
+                # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+                correctness_tmp = pred_labels_tmp == labels
+                # 全体の正解配列に追加
+                correct_predictions.extend(correctness_tmp)
+                # data, labelを追加
+                X_repair.extend(data)
+                y_repair.extend(labels)
+            correct_predictions = np.array(correct_predictions)
+            X_repair = np.array(X_repair)
+            y_repair = np.array(y_repair)
+            print(f"{sum(correct_predictions)} / {len(correct_predictions)} = {sum(correct_predictions) / len(correct_predictions)}")
+            continue
 
         # 対象となる重みを取得
         target_weight = get_target_weights(model)

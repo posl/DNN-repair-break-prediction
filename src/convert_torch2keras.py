@@ -115,8 +115,8 @@ def C10ModelKeras(input_dim):
 
 
 def TextModelKeras(input_dim):
-    inputs = Input(shape=(100, input_dim)) # NOTE: shapeの第一引数がよくわからない
-    x = LSTM(128, use_bias=False)(inputs)
+    inputs = Input(shape=(None, input_dim)) # NOTE: shapeの第一引数がよくわからない
+    x = LSTM(128, use_bias=False, return_sequences=True)(inputs)
     x = Dense(2)(x)
     return Model(inputs=inputs, outputs=x)
 
@@ -186,18 +186,23 @@ if __name__ == "__main__":
         elif dataset_type == "image":
             dummy_in = torch.randn(5, *torch_model.input_dim)
         elif dataset_type == "text":
-            dummy_in = torch.randn(5, 100, torch_model.input_dim)
+            # 可変長系列のダミー入力生成
+            dummy_lens = [24, 30, 2, 3, 4]
+            dummy_maxlen = max(dummy_lens)
+            dummy_in = torch.randn(5, dummy_maxlen, torch_model.input_dim)
         else:
             raise ValueError(f"dataset_type must be one of 'tabular', 'image', 'text'.")
         # torch_modelの出力を計算
-        torch_out = torch_model(x=dummy_in, x_lens=[100]*5).detach().numpy()
+        torch_out = torch_model(x=dummy_in, x_lens=dummy_lens).detach().numpy()
         # keras_modelの出力を計算
         if dataset_type == "image":  # 画像の場合はchannel first -> channel lastにする
             keras_out = keras_model(
                 dummy_in.detach().numpy().transpose(0, 2, 3, 1), training=False
             )
         else:
-            keras_out = keras_model(dummy_in.detach().numpy(), training=False)
+            keras_out = keras_model(dummy_in.detach().numpy(), training=False).numpy()
+            if dataset_type == "text":
+                keras_out = keras_out[np.arange(keras_out.shape[0]), np.array(dummy_lens) - 1, :]
         # print(np.argmax(torch_out, axis=1))
         # print(np.argmax(keras_out, axis=1))
         # torch_outとkeras_outのL1ノルムを計算
