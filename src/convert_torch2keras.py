@@ -14,6 +14,7 @@ from tensorflow.keras.layers import (
     Dropout,
     Permute,
     BatchNormalization,
+    LSTM,
 )
 from lib.model import select_model
 from lib.log import set_exp_logging
@@ -44,7 +45,11 @@ def TabularModelKeras(input_dim):
 # 画像データセットに対してはデータセットごとにモデルが違うので個別に定義
 # fmのkerasによるモデルクラス
 def FashionModelKeras(input_dim):
-    _input_dim = (input_dim[1], input_dim[2], input_dim[0])  # channel first -> channel last
+    _input_dim = (
+        input_dim[1],
+        input_dim[2],
+        input_dim[0],
+    )  # channel first -> channel last
     inputs = Input(shape=_input_dim)
     x = Conv2D(32, (5, 5), padding="same", activation="relu")(inputs)
     x = MaxPooling2D(2)(x)
@@ -61,10 +66,16 @@ def FashionModelKeras(input_dim):
 
 # gtsrbのkerasによるモデルクラス
 def GTSRBModelKeras(input_dim):
-    _input_dim = (input_dim[1], input_dim[2], input_dim[0])  # channel first -> channel last
+    _input_dim = (
+        input_dim[1],
+        input_dim[2],
+        input_dim[0],
+    )  # channel first -> channel last
     inputs = Input(shape=_input_dim)
     x = Conv2D(100, (3, 3), padding="valid", activation="relu")(inputs)
-    x = BatchNormalization(momentum=0.9, epsilon=1e-5)(x)  # NOTE: このハイパラ設定はtorch側のデフォルト値に合わせるためのもの
+    x = BatchNormalization(momentum=0.9, epsilon=1e-5)(
+        x
+    )  # NOTE: このハイパラ設定はtorch側のデフォルト値に合わせるためのもの
     x = MaxPooling2D(2)(x)
     x = Conv2D(150, (4, 4), padding="valid", activation="relu")(x)
     x = BatchNormalization(momentum=0.9, epsilon=1e-5)(x)
@@ -83,7 +94,11 @@ def GTSRBModelKeras(input_dim):
 
 # c10のkerasによるモデルクラス
 def C10ModelKeras(input_dim):
-    _input_dim = (input_dim[1], input_dim[2], input_dim[0])  # channel first -> channel last
+    _input_dim = (
+        input_dim[1],
+        input_dim[2],
+        input_dim[0],
+    )  # channel first -> channel last
     inputs = Input(shape=_input_dim)
     x = Conv2D(64, (3, 3), padding="same", activation="relu")(inputs)
     x = Conv2D(64, (3, 3), padding="same", activation="relu")(x)
@@ -96,6 +111,13 @@ def C10ModelKeras(input_dim):
     x = Dense(256, activation="relu")(x)
     x = Dense(256, activation="relu")(x)
     x = Dense(10)(x)
+    return Model(inputs=inputs, outputs=x)
+
+
+def TextModelKeras(input_dim):
+    inputs = Input(shape=(100, input_dim)) # NOTE: shapeの第一引数がよくわからない
+    x = LSTM(128, use_bias=False)(inputs)
+    x = Dense(2)(x)
     return Model(inputs=inputs, outputs=x)
 
 
@@ -141,30 +163,51 @@ if __name__ == "__main__":
             "keras_model": GTSRBModelKeras,
         },
     }
+    # text datasets
+    dic_text = {
+        "imdb": {
+            "num_folds": 5,
+            "model_path_format": "../models/imdb/imdb-training-setting1/trained_model_fold-{}.pt",
+            "keras_model": TextModelKeras,
+        },
+        "rtmr": {
+            "num_folds": 5,
+            "model_path_format": "../models/rtmr/rtmr-training-setting1/trained_model_fold-{}.pt",
+            "keras_model": TextModelKeras,
+        },
+    }
 
     # dummy inputに対してtorch_modelとkeras_modelの出力が一致してそうか確認
-    def check_output_for_dummy(torch_model, keras_model, stdout=True):
+    def check_output_for_dummy(torch_model, keras_model, dataset_type, stdout=True):
         torch.manual_seed(0)
         # バッチサイズ5のダミー入力生成
-        if type(torch_model.input_dim) == int:
+        if dataset_type == "tabular":
             dummy_in = torch.randn(5, torch_model.input_dim)
-        elif type(torch_model.input_dim) == tuple:
+        elif dataset_type == "image":
             dummy_in = torch.randn(5, *torch_model.input_dim)
+        elif dataset_type == "text":
+            dummy_in = torch.randn(5, 100, torch_model.input_dim)
+        else:
+            raise ValueError(f"dataset_type must be one of 'tabular', 'image', 'text'.")
         # torch_modelの出力を計算
-        torch_out = torch_model(dummy_in).detach().numpy()
+        torch_out = torch_model(x=dummy_in, x_lens=[100]*5).detach().numpy()
         # keras_modelの出力を計算
-        if (
-            type(torch_model.input_dim) == tuple and len(torch_model.input_dim) == 3
-        ):  # 画像の場合はchannel first -> channel lastにする
-            keras_out = keras_model(dummy_in.detach().numpy().transpose(0, 2, 3, 1), training=False)
+        if dataset_type == "image":  # 画像の場合はchannel first -> channel lastにする
+            keras_out = keras_model(
+                dummy_in.detach().numpy().transpose(0, 2, 3, 1), training=False
+            )
         else:
             keras_out = keras_model(dummy_in.detach().numpy(), training=False)
         # print(np.argmax(torch_out, axis=1))
         # print(np.argmax(keras_out, axis=1))
         # torch_outとkeras_outのL1ノルムを計算
-        logger.info(f"L1 norm of torch_out and keras_out: {np.linalg.norm(torch_out - keras_out, ord=1)}")
+        logger.info(
+            f"L1 norm of torch_out and keras_out: {np.linalg.norm(torch_out - keras_out, ord=1)}"
+        )
         if stdout:
-            print(f"L1 norm of torch_out and keras_out: {np.linalg.norm(torch_out - keras_out, ord=1)}")
+            print(
+                f"L1 norm of torch_out and keras_out: {np.linalg.norm(torch_out - keras_out, ord=1)}"
+            )
 
     if dataset_type == "tabular":
         dic = dic_tabular
@@ -174,7 +217,9 @@ if __name__ == "__main__":
             for k in range(dic[ds]["num_folds"]):
                 logger.info(f"dataset={ds}, k={k}")
                 # 学習済みのモデルの重みをロード
-                torch_model.load_state_dict(torch.load(dic[ds]["model_path_format"].format(k)))
+                torch_model.load_state_dict(
+                    torch.load(dic[ds]["model_path_format"].format(k))
+                )
                 # torch_modelと同じ構造のkeras_modelを定義
                 keras_model = TabularModelKeras(torch_model.input_dim)
                 # table dataの場合torch modelの入れ子構造をflattenにする
@@ -196,11 +241,13 @@ if __name__ == "__main__":
                         for pk, pt in zip(kp, tp):
                             pt = torch.t(pt[1]).detach().numpy()
                             print(pt.shape, pk.shape)
-                            print(f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(pk - pt))}")
+                            print(
+                                f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(pk - pt))}"
+                            )
                 # ============================================
 
                 # ダミー入力に対する両モデルの出力の一致性を確認
-                check_output_for_dummy(torch_model, keras_model, stdout=True)
+                check_output_for_dummy(torch_model, keras_model, dataset_type, stdout=True)
 
                 # keras_modelを保存
                 save_dir = os.path.dirname(dic[ds]["model_path_format"])
@@ -217,11 +264,15 @@ if __name__ == "__main__":
             torch_model = select_model(ds)
             for k in range(dic[ds]["num_folds"]):
                 # 学習済みのモデルの重みをロード
-                torch_weights = torch.load(dic[ds]["model_path_format"].format(k), map_location=device)
+                torch_weights = torch.load(
+                    dic[ds]["model_path_format"].format(k), map_location=device
+                )
                 torch_model.load_state_dict(torch_weights)
                 torch_model.eval()
                 # torchの重みの名前と値のリスト
-                torch_keys, torch_vals = list(torch_weights.keys()), list(torch_weights.values())
+                torch_keys, torch_vals = list(torch_weights.keys()), list(
+                    torch_weights.values()
+                )
                 # torch_modelと同じ構造のkeras_modelを定義
                 keras_model = dic[ds]["keras_model"](input_dim=torch_model.input_dim)
                 for i, l in enumerate(keras_model.layers):
@@ -244,7 +295,8 @@ if __name__ == "__main__":
                             # batch_trackedとかいう使わない奴
                             bn_unused = torch_vals.pop(0)
                             print(
-                                [bn_kp.shape for bn_kp in param], [bn_tp.shape for bn_tp in [bn_w, bn_b, bn_rm, bn_rv]]
+                                [bn_kp.shape for bn_kp in param],
+                                [bn_tp.shape for bn_tp in [bn_w, bn_b, bn_rm, bn_rv]],
                             )
                             set_weights_list = [bn_w, bn_b, bn_rm, bn_rv]
                         # batchnorm以外
@@ -282,10 +334,15 @@ if __name__ == "__main__":
                             # batch_trackedとかいう使わない奴
                             bn_unused = torch_vals.pop(0)
                             print(
-                                [bn_kp.shape for bn_kp in param], [bn_tp.shape for bn_tp in [bn_w, bn_b, bn_rm, bn_rv]]
+                                [bn_kp.shape for bn_kp in param],
+                                [bn_tp.shape for bn_tp in [bn_w, bn_b, bn_rm, bn_rv]],
                             )
-                            print(f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(bn_w - param[0]))}")
-                            print(f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(bn_b - param[1]))}")
+                            print(
+                                f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(bn_w - param[0]))}"
+                            )
+                            print(
+                                f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(bn_b - param[1]))}"
+                            )
                             print(
                                 f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(bn_rm - param[2]))}"
                             )
@@ -303,7 +360,9 @@ if __name__ == "__main__":
                                     tp = np.transpose(tp, (1, 0))
                                 # torchとkerasの重みのL1ノルムを計算
                                 print(tp.shape, kp.shape)
-                                print(f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(kp - tp))}")
+                                print(
+                                    f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(kp - tp))}"
+                                )
                 # ============================================
 
                 # 各レイヤの出力の一致性をチェック============================================
@@ -320,7 +379,9 @@ if __name__ == "__main__":
                     if not l.name.startswith("permute"):
                         keras_out.append(out)
                 # torch_modelとkeras_modelそれぞれの出力を比較する
-                for i, (ko, to, kl) in enumerate(zip(keras_out, torch_out, keras_model.layers)):
+                for i, (ko, to, kl) in enumerate(
+                    zip(keras_out, torch_out, keras_model.layers)
+                ):
                     to = to.detach().numpy()
                     print(f"layer {i}", kl.name, ko.shape, to.shape)
                     if len(to.shape) == 4:
@@ -333,11 +394,13 @@ if __name__ == "__main__":
                     # print(np.sort(to.flatten())[::-1][:100])
                     # print(np.sort(diff.flatten())[::-1][:100])
                     # XXX: XXX: XXX: batchnormの出力が合わない;o; 数値計算の誤差か.
-                    print(f"sum of abs. of diff. of torch and keras layer outs: {np.sum(np.abs(ko - to))}")
+                    print(
+                        f"sum of abs. of diff. of torch and keras layer outs: {np.sum(np.abs(ko - to))}"
+                    )
                 # 確認用終了============================================
 
                 # ダミー入力に対する両モデルの出力の一致性を確認
-                check_output_for_dummy(torch_model, keras_model, stdout=True)
+                check_output_for_dummy(torch_model, keras_model, dataset_type, stdout=True)
 
                 # keras_modelを保存
                 save_dir = os.path.dirname(dic[ds]["model_path_format"])
@@ -346,8 +409,48 @@ if __name__ == "__main__":
                 logger.info(f"keras_model is saved to {save_path}")
 
     elif dataset_type == "text":
-        # TODO:
-        pass
+        dic = dic_text
+        for ds in dic.keys():
+            # torch_modelの初期化
+            torch_model = select_model(ds)
+            for k in range(dic[ds]["num_folds"]):
+                print(f"dataset={ds}, k={k}")
+                # 学習済みのモデルの重みをロード
+                torch_weights = torch.load(dic[ds]["model_path_format"].format(k), map_location="cpu")
+                torch_model.load_state_dict(torch_weights)
+                torch_model.eval()
+                # torchの重みの値のリスト
+                torch_vals = list(torch_weights.values())
+                # torch_modelと同じ構造のkeras_modelを定義
+                keras_model = dic[ds]["keras_model"](input_dim=torch_model.input_dim)
+                # kerasの重みの値のリスト
+                keras_vals = list(keras_model.get_weights())
+                # 方針: レイヤ数の少ないモデルなのでmodel.set_weights()で一挙にパラメータ設定を行う
+                # そのためにtorch_valsとkeras_valsの形状を確認
+                assert len(torch_vals) == len(keras_vals)
+                for kp, tp in zip(keras_vals, torch_vals):
+                    print(kp.shape, tp.shape)
+                    # HACK: 本当はなんらかのassert文が必要だけど上の結果で確認して
+                # torch_valsの各パラメータ(lstm, denseのweights)を転置してkeras_modelにセット
+                keras_model.set_weights([torch.t(tv).detach().numpy() for tv in torch_vals])
 
+                # 各レイヤの各重みの一致性の確認============================================
+                keras_vals = list(keras_model.get_weights())
+                for kp, tp in zip(keras_vals, torch_vals):
+                    tp = torch.t(tp).detach().numpy()
+                    print(tp.shape, kp.shape)
+                    print(
+                        f"sum of abs. of diff. of torch and keras weights: {np.sum(np.abs(kp - tp))}"
+                    )
+                # ==========================================================================
+
+                # ダミー入力に対する両モデルの出力の一致性を確認
+                check_output_for_dummy(torch_model, keras_model, dataset_type, stdout=True)
+
+                # keras_modelを保存
+                save_dir = os.path.dirname(dic[ds]["model_path_format"])
+                save_path = os.path.join(save_dir, "keras_model_fold-{}.h5".format(k))
+                keras_model.save(save_path)
+                logger.info(f"keras_model is saved to {save_path}")
     else:
         raise ValueError(f"dataset_type must be one of 'tabular', 'image', 'text'.")

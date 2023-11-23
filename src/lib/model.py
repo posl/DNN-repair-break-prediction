@@ -5,7 +5,13 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import numpy as np
 import time
 from collections import defaultdict
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, matthews_corrcoef
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    matthews_corrcoef,
+)
 
 # for logging
 from logging import getLogger
@@ -102,7 +108,9 @@ class TabularModel(nn.Module):
                     break
         return hvals
 
-    def predict_with_intervention(self, x, hval, target_lid=None, target_nid=None, device="cpu"):
+    def predict_with_intervention(
+        self, x, hval, target_lid=None, target_nid=None, device="cpu"
+    ):
         """指定したニューロンの値に介入した場合 (= あるニューロンの値を固定する) の予測結果を返す.
 
         Args:
@@ -122,7 +130,9 @@ class TabularModel(nn.Module):
 
             # 介入したニューロン値に対しては全結合層の後のニューロンを介入後の値で置き換える
             if lid == target_lid:
-                fc_out[0][target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+                fc_out[0][target_nid] = torch.tensor(
+                    hval, dtype=torch.float32, device=device
+                )
 
             # 最終層かどうかで場合分け
             if len(layer) == 2:
@@ -148,7 +158,9 @@ class TabularModel(nn.Module):
         """
         o = x
         # 修正したいニューロンの数の確認
-        assert len(neuron_location) == len(hvals), f"Error: len(neuron_location) != len(hvals)."
+        assert len(neuron_location) == len(
+            hvals
+        ), f"Error: len(neuron_location) != len(hvals)."
         repair_num = len(neuron_location)
 
         # layerごとの順伝搬
@@ -159,7 +171,9 @@ class TabularModel(nn.Module):
             for hval, (target_lid, target_nid) in zip(hvals, neuron_location):
                 if lid == target_lid:
                     # NOTE: 公式実装に準拠 (lib_models.pyのapply_repair_fixed())
-                    fc_out[0][target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+                    fc_out[0][target_nid] *= 1 + torch.tensor(
+                        hval, dtype=torch.float32, device=device
+                    )
 
             # 最終層かどうかで場合分け
             if len(layer) == 2:
@@ -306,7 +320,10 @@ class FashionModel(ImageModel):
         self.dropout = nn.Dropout(0.4)
         self.dense2 = nn.Linear(1024, 10)
         self.keras_lid_to_torch_layers = {
-            1: self.conv1, 3: self.conv2, 7: self.dense1, 9: self.dense2
+            1: self.conv1,
+            3: self.conv2,
+            7: self.dense1,
+            9: self.dense2,
         }
 
     def forward(self, x):
@@ -373,7 +390,9 @@ class FashionModel(ImageModel):
         # # layer 6
         # out = self.dense2(out)
 
-    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+    def predict_with_intervention(
+        self, data, hval, target_lid=None, target_nid=None, device="cpu"
+    ):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -418,7 +437,9 @@ class FashionModel(ImageModel):
         out = self.dense1(out)
         # tabular modelの実装と同様に各neuronに対するhvalの適用を行う
         for hval, target_nid in zip(hvals, neuron_location):
-            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+            out[:, target_nid] *= 1 + torch.tensor(
+                hval, dtype=torch.float32, device=device
+            )
         out = F.relu(out)
         # layer 5
         out = self.dropout(out)
@@ -446,7 +467,11 @@ class GTSRBModel(ImageModel):
         self.batch_normalization4 = nn.BatchNorm1d(200)
         self.dense2 = nn.Linear(200, 43)
         self.keras_lid_to_torch_layers = {
-            1: self.conv1, 4: self.conv2, 7: self.conv3, 12: self.dense1, 14: self.dense2
+            1: self.conv1,
+            4: self.conv2,
+            7: self.conv3,
+            12: self.dense1,
+            14: self.dense2,
         }
 
     def forward(self, x):
@@ -527,7 +552,9 @@ class GTSRBModel(ImageModel):
         # # out = F.softmax(self.dense2(out), dim=1) #元々の実装ではここだけsoftmaxとられており統一性がない
         # out = self.dense2(out)
 
-    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+    def predict_with_intervention(
+        self, data, hval, target_lid=None, target_nid=None, device="cpu"
+    ):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -591,7 +618,9 @@ class GTSRBModel(ImageModel):
         # NOTE: hard coding the target lid is 9. i.e. The output of dense1 (200 neurons) are subject to repair.
         out = self.dense1(out)
         for hval, target_nid in zip(hvals, neuron_location):
-            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+            out[:, target_nid] *= 1 + torch.tensor(
+                hval, dtype=torch.float32, device=device
+            )
         out = F.relu(out)
         # layer 10
         out = self.batch_normalization4(out)
@@ -617,7 +646,13 @@ class C10Model(ImageModel):
         self.dense2 = nn.Linear(256, 256)
         self.dense3 = nn.Linear(256, 10)
         self.keras_lid_to_torch_layers = {
-            1: self.conv1, 2: self.conv2, 4: self.conv3, 5: self.conv4, 9: self.dense1, 10: self.dense2, 11: self.dense3
+            1: self.conv1,
+            2: self.conv2,
+            4: self.conv3,
+            5: self.conv4,
+            9: self.dense1,
+            10: self.dense2,
+            11: self.dense3,
         }
 
     def forward(self, x):
@@ -683,7 +718,9 @@ class C10Model(ImageModel):
         # layer 8
         # out = self.dense3(out)
 
-    def predict_with_intervention(self, data, hval, target_lid=None, target_nid=None, device="cpu"):
+    def predict_with_intervention(
+        self, data, hval, target_lid=None, target_nid=None, device="cpu"
+    ):
         # 順伝搬を行う
         out = data
         # layer 0
@@ -737,7 +774,9 @@ class C10Model(ImageModel):
         # NOTE: hard coding the target lid is 7. i.e. The output of dense1 (256 neurons) are subject to repair.
         out = self.dense2(out)
         for hval, target_nid in zip(hvals, neuron_location):
-            out[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+            out[:, target_nid] *= 1 + torch.tensor(
+                hval, dtype=torch.float32, device=device
+            )
         out = F.relu(out)
         # layer 8
         out = self.dense3(out)
@@ -745,6 +784,7 @@ class C10Model(ImageModel):
         prob = nn.Softmax(dim=1)(out)
         pred = torch.argmax(out, dim=1)
         return {"prob": prob, "pred": pred}
+
 
 class TextModel(nn.Module):
     """
@@ -755,28 +795,39 @@ class TextModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, bidirectional, num_class):
         super().__init__()
         self.input_dim = input_size
-        self.lstm1 = nn.LSTM(input_size, hidden_size, num_layers, bidirectional, batch_first=True)
+        self.lstm1 = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            bias=False,
+            bidirectional=bidirectional,
+            batch_first=True,
+        )
         self.dense1 = nn.Linear(hidden_size, num_class)
 
     def count_neurons_params(self):
-        """ニューロン数と学習できるパラメータ数を数える. 
-        NOTE: neuron数は多分必要ないのでパラメータ数だけ数える. 
+        """ニューロン数と学習できるパラメータ数を数える.
+        NOTE: neuron数は多分必要ないのでパラメータ数だけ数える.
         しかしメソッド名が違うとエラーになりそうなので名前はこのままで."""
-        
+
         num_params = 0
         for name, param in self.named_parameters():
             num_params += np.prod(param.shape)
         return {"num_params": num_params}
-    
+
     def forward(self, x, x_lens):
-        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        x_packed = pack_padded_sequence(
+            x, x_lens, batch_first=True, enforce_sorted=False
+        )
         output, hn = self.lstm1(x_packed)
         output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
         output_dense = self.dense1(output_padded)
         # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
-        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        output_dense = output_dense[
+            torch.arange(output_dense.size(0)), output_lengths - 1, :
+        ]
         return output_dense
-    
+
     def predict(self, x, x_lens, device):
         x = x.to(device)
         out = self.forward(x, x_lens)
@@ -786,26 +837,41 @@ class TextModel(nn.Module):
         return {"prob": prob, "pred": pred}
 
     def get_layer_distribution(self, x, x_lens, target_lid=1):
-        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        x_packed = pack_padded_sequence(
+            x, x_lens, batch_first=True, enforce_sorted=False
+        )
         output, hn = self.lstm1(x_packed)
         output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
         if target_lid == 0:
-            return output_padded.detach().cpu().numpy(), output_lengths.detach().cpu().numpy()
+            return (
+                output_padded.detach().cpu().numpy(),
+                output_lengths.detach().cpu().numpy(),
+            )
         output_dense = self.dense1(output_padded)
         # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
-        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        output_dense = output_dense[
+            torch.arange(output_dense.size(0)), output_lengths - 1, :
+        ]
         if target_lid == 1:
             return output_dense.detach().cpu().numpy(), None
-        
-    def predict_with_intervention(self, x, x_lens, hval, target_lid=None, target_nid=None, device="cpu"):
+
+    def predict_with_intervention(
+        self, x, x_lens, hval, target_lid=None, target_nid=None, device="cpu"
+    ):
         x = x.to(device)
-        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        x_packed = pack_padded_sequence(
+            x, x_lens, batch_first=True, enforce_sorted=False
+        )
         output, hn = self.lstm1(x_packed)
         output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
         output_dense = self.dense1(output_padded)
         # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
-        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
-        output_dense[:, target_nid] = torch.tensor(hval, dtype=torch.float32, device=device)
+        output_dense = output_dense[
+            torch.arange(output_dense.size(0)), output_lengths - 1, :
+        ]
+        output_dense[:, target_nid] = torch.tensor(
+            hval, dtype=torch.float32, device=device
+        )
         # dense層の出力をsoftmaxで変換
         prob = nn.Softmax(dim=1)(output_dense)
         pred = torch.argmax(prob, dim=1)
@@ -815,14 +881,20 @@ class TextModel(nn.Module):
         # target_lid固定なので, target_nidのみの列になっていることを確認
         assert neuron_location.ndim == 1, "neuron_location must be 1-dim."
         x = x.to(device)
-        x_packed = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
+        x_packed = pack_padded_sequence(
+            x, x_lens, batch_first=True, enforce_sorted=False
+        )
         output, hn = self.lstm1(x_packed)
         output_padded, output_lengths = pad_packed_sequence(output, batch_first=True)
         output_dense = self.dense1(output_padded)
         # NOTE:ここまでで形状は (N, seq_len, num_class)になってる. これを (N, num_class) という各サンプルへのスコアにする
-        output_dense = output_dense[torch.arange(output_dense.size(0)), output_lengths - 1, :]
+        output_dense = output_dense[
+            torch.arange(output_dense.size(0)), output_lengths - 1, :
+        ]
         for hval, target_nid in zip(hvals, neuron_location):
-            output_dense[:, target_nid] *= 1 + torch.tensor(hval, dtype=torch.float32, device=device)
+            output_dense[:, target_nid] *= 1 + torch.tensor(
+                hval, dtype=torch.float32, device=device
+            )
         # dense層の出力をsoftmaxで変換
         prob = nn.Softmax(dim=1)(output_dense)
         pred = torch.argmax(prob, dim=1)
@@ -831,13 +903,27 @@ class TextModel(nn.Module):
 
 class IMDBModel(TextModel):
     def __init__(self):
-        super().__init__(input_size=300, hidden_size=128, num_layers=1, bidirectional=False, num_class=2)
+        super().__init__(
+            input_size=300,
+            hidden_size=128,
+            num_layers=1,
+            bidirectional=False,
+            num_class=2,
+        )
         # logger.info(self.count_neurons_params())
+
 
 class RTMRModel(TextModel):
     def __init__(self):
-        super().__init__(input_size=300, hidden_size=128, num_layers=1, bidirectional=False, num_class=2)
+        super().__init__(
+            input_size=300,
+            hidden_size=128,
+            num_layers=1,
+            bidirectional=False,
+            num_class=2,
+        )
         # logger.info(self.count_neurons_params())
+
 
 def train_model(model, dataloader, num_epochs, dataset_type):
     """学習用の関数
@@ -908,13 +994,25 @@ def train_model(model, dataloader, num_epochs, dataset_type):
         # epochのphaseごとのlossと正解率
         t_epoch_finish = time.time()
         print("-------------")
-        print("epoch {} || Epoch_Loss: {:.4f} ".format(epoch, epoch_loss / len(dataloader.dataset)))
+        print(
+            "epoch {} || Epoch_Loss: {:.4f} ".format(
+                epoch, epoch_loss / len(dataloader.dataset)
+            )
+        )
         print("timer:  {:.4f} sec.".format(t_epoch_finish - t_epoch_start))
         epoch_loss_list.append(epoch_loss / len(dataloader.dataset))
     return model, epoch_loss_list
 
 
-def sm_correctness(model, dataloader, dataset_type, is_repair=False, hvals=None, neuron_location=None, device="cpu"):
+def sm_correctness(
+    model,
+    dataloader,
+    dataset_type,
+    is_repair=False,
+    hvals=None,
+    neuron_location=None,
+    device="cpu",
+):
     """各データに対して, 予測が分類すべきラベルと合っているかどうか (あってたら1, ちがったら0) を表す配列を返す.
 
     Args:
@@ -956,18 +1054,22 @@ def sm_correctness(model, dataloader, dataset_type, is_repair=False, hvals=None,
                     hvals is not None and neuron_location is not None
                 ), "despite is_repair=True, hvals and neuron_location are None!!!"
                 # 修正後の重みで予測.
-                out = model.predict_with_repair(data, hvals, neuron_location=neuron_location, device=device)
+                out = model.predict_with_repair(
+                    data, hvals, neuron_location=neuron_location, device=device
+                )
             pred = out["pred"].cpu()
             y_true.extend(labels.cpu())
             y_pred.extend(pred)
-    else: # text datasetの場合
+    else:  # text datasetの場合
         for data, labels, x_lens in dataloader:
             data = data.to(device)
             if not is_repair:
                 # 修正前の重みで予測.
                 out = model.predict(data, x_lens, device=device)
             else:
-                out = model.predict_with_repair(data, x_lens, hvals, neuron_location=neuron_location, device=device)
+                out = model.predict_with_repair(
+                    data, x_lens, hvals, neuron_location=neuron_location, device=device
+                )
 
             pred = out["pred"].cpu()
             y_true.extend(labels.cpu())
@@ -979,7 +1081,16 @@ def sm_correctness(model, dataloader, dataset_type, is_repair=False, hvals=None,
     return y_true, y_pred, correctness_arr
 
 
-def eval_model(model, dataloader, dataset_type, is_repair=False, hvals=None, neuron_location=None, is_binary=True, device="cpu"):
+def eval_model(
+    model,
+    dataloader,
+    dataset_type,
+    is_repair=False,
+    hvals=None,
+    neuron_location=None,
+    is_binary=True,
+    device="cpu",
+):
     """モデルの評価用の関数.
 
     Args:
@@ -995,7 +1106,9 @@ def eval_model(model, dataloader, dataset_type, is_repair=False, hvals=None, neu
         *float: dataloaderでモデルを評価した各種メトリクス.
     """
     # correctnessを評価
-    y_true, y_pred, correctness_arr = sm_correctness(model, dataloader, dataset_type, is_repair, hvals, neuron_location, device)
+    y_true, y_pred, correctness_arr = sm_correctness(
+        model, dataloader, dataset_type, is_repair, hvals, neuron_location, device
+    )
     average = "binary" if is_binary else "macro"
     # 各評価指標を算出
     acc = accuracy_score(y_true, y_pred)

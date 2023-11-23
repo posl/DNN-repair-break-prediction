@@ -39,7 +39,7 @@ if __name__ == "__main__":
     # 定数たち
     # FIXME: 実行する前に以下の変数はチェックすること
     methods = ["care", "apricot", "arachne"]
-    datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb"]
+    datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr", None]
     # datasets = ["credit", "census", "bank", "fm"]
 
     # 描画時の表示用のラベル名たち
@@ -51,21 +51,25 @@ if __name__ == "__main__":
         "c10": "C10",
         "fm": "FM",
         "gtsrb": "GTSRB",
+        "imdb": "IMDB",
+        "rtmr": "RTMR",
     }
     method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne"}
     # 描画用の角度たち
     angles = np.linspace(0.25 * np.pi, 2.25 * np.pi, 5)
 
     num_col = 3
-    num_row = 6
+    num_row = 9
 
     # 描画ゾーン
-    fig = plt.figure(figsize=(9, 18))
+    fig = plt.figure(figsize=(9, 27))
     for i, (method, dataset) in enumerate(product(methods, datasets)):
-        # FIXME: 一時的なif
-        if method == "arachne" and dataset in ["gtsrb"]:
+        # print(i, method, dataset)
+        if dataset is None:
             continue
-        # print(method, dataset)
+        # FIXME: 一時的なif
+        if method == "arachne" and dataset in ["imdb", "rtmr"]:
+            continue
         ax = fig.add_subplot(num_row, num_col, i + 1, projection="polar")
         df, exp_cols = get_df(method, dataset, rb)
         for tf in [True, False]:
