@@ -861,6 +861,7 @@ if __name__ == "__main__":
             max_len = 0 # X_repair内の最大系列長
             for data, _, _ in fixed_repair_loader:
                 max_len = max(max_len, data.shape[1])
+            fixed_repair_loader = fix_dataloader(repair_loader, collate_fn=collate_fn)
             for batch_idx, (data, labels, data_lens) in enumerate(fixed_repair_loader):
                 data, labels = data.to(device), labels.to(device)
                 # data, labelsをnumpyに変換

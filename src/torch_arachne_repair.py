@@ -9,6 +9,7 @@ import torch
 from lib.model import eval_model, select_model
 from lib.util import json2dict, dataset_type, fix_dataloader, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
+from lib.dataset import pad_collate
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
@@ -96,27 +97,28 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         used_data["X_for_repair"],
         used_data["y_for_repair"],
     )
-    if task_name in ["c10", "gtsrb", "fm"]:
+    if dataset_type(task_name) == "image":
         X_for_repair_torch = np.transpose(
             X_for_repair_keras, (0, 3, 1, 2)
         )  # channel firstにもどす
     else:
         X_for_repair_torch = X_for_repair_keras
-    X_for_repair, y_for_repair = torch.from_numpy(
-        X_for_repair_torch.astype(np.float32)
-    ).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
+    X_for_repair, y_for_repair = torch.from_numpy(X_for_repair_torch.astype(np.float32)).clone().to(device), torch.from_numpy(y_for_repair_keras).clone().to(device)
     # 予測の成功or失敗数を確認
     # NOTE: model.predict(X_for_repair, device=device)["pred"] とするとX_for_repairのサイズが大きすぎてGTSRBでメモリエラーになる
     # なのでバッチ化する
-    tmp_ds = TensorDataset(X_for_repair, y_for_repair)
-    tmp_dl = DataLoader(tmp_ds, batch_size=128, shuffle=False)
-    pred_labels = []
-    for x, _ in tmp_dl:
-        tmp_pred = (
-            model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
-        )
-        pred_labels.append(tmp_pred)
-    pred_labels = np.concatenate(pred_labels, axis=0)
+    if dataset_type(task_name) != "text":
+        tmp_ds = TensorDataset(X_for_repair, y_for_repair)
+        tmp_dl = DataLoader(tmp_ds, batch_size=128, shuffle=False)
+        pred_labels = []
+        for batch in tmp_dl:
+            x = batch[0]
+            tmp_pred = model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
+            pred_labels.append(tmp_pred)
+        pred_labels = np.concatenate(pred_labels, axis=0)
+    else:
+        len_for_repair = used_data["len_for_repair"]
+        pred_labels = model.predict(X_for_repair, len_for_repair, device=device)["pred"].to("cpu").detach().numpy().copy()
     y_for_repair = y_for_repair.to("cpu").detach().numpy().copy()
     correct_predictions = pred_labels == y_for_repair
     logger.info(
@@ -146,13 +148,19 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     loc_path = os.path.join(loc_dir, f"rep{rep}", f"place_to_fix_fold-{k}.csv")
     places_df = pd.read_csv(loc_path)
     places_list = []
+    _tl_list = []
     for idx_to_tl, pair in places_df.iterrows():
         # literal_evalを入れるのはweightの位置を示すペアのtupleが何故か文字列で入ってるから
         places_list.append((pair["layer"], literal_eval(pair["weight"])))
+        _tl_list.append(pair["layer"])
     logger.info(f"places_list (keras-styled shape): {places_list}")
-    indices_to_ptarget_layers = sorted(
-        list(set([idx_to_tl for idx_to_tl, _ in places_list]))
-    )
+    tl_list = []
+    for tl in _tl_list:
+        if isinstance(literal_eval(tl), tuple):
+            tl_list.append(tl[0])
+        else:
+            tl_list.append(tl)
+    indices_to_ptarget_layers = sorted(tl_list)
     logger.info(f"Patch target layers: {indices_to_ptarget_layers}")
 
     return (
@@ -218,7 +226,7 @@ if __name__ == "__main__":
     # binary clf. かどうかのフラグ
     if task_name in ["fm", "c10", "gtsrb"]:
         is_binary = False
-    elif task_name in ["credit", "census", "bank"]:
+    elif task_name in ["credit", "census", "bank", "imdb", "rtmr"]:
         is_binary = True
 
     # モデルとデータの読み込み先のディレクトリ
@@ -239,7 +247,6 @@ if __name__ == "__main__":
     )
     model.to(device)
     model.eval()
-    dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name, model)
 
     # localization時の情報をロード
     (
@@ -273,8 +280,9 @@ if __name__ == "__main__":
         deltas = {}
         for lid in indices_to_ptarget_layers:
             target_layer = dic_keras_lid_to_torch_layers[lid]
-            target_param = target_layer.weight
-            deltas[lid] = target_param
+            if dataset_type(task_name) != "text":
+                target_param = target_layer.weight
+                deltas[lid] = target_param
         # この間でdeltasをArachneの手法で更新していけばいいという話
         # searcherのinitializerに入れる変数をここで定義 HACK: 外部化
         num_label = len(set(y_for_repair))

@@ -88,5 +88,7 @@ def keras_lid_to_torch_layers(task_name, model):
         for ti, i in enumerate(range(1, 12, 2)):
             ret_dic[i] = model.layers[ti][0]
         return ret_dic
+    elif task_name in ["imdb", "rtmr"]:
+        return {1: model.lstm1, 2: model.dense1}
     else:
         assert False
