@@ -20,6 +20,7 @@ from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.log import set_exp_logging
 from lib.dataset import pad_collate
 from src_arachne.utils import model_util as model_utils
+from src_arachne.utils import lstm_layer
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -66,8 +67,114 @@ def get_target_weights(model):
                     target_weights[i] = [weights, lname]
     return target_weights
 
+def compute_output_per_w(x, h, t_w_kernel, t_w_recurr_kernel, const, with_norm = False): 
+    """
+    A slice for a single neuron (unit or lstm cell)
+    x = (batch_size, time_steps, num_features)
+    h = (batch_size, time_steps, num_units)
+    t_w_kernel = (num_features,)
+    t_w_recurr_kernel = (num_units,)
+    consts = (batch_size, time_steps) -> the value that is multiplied in the final state computation
+    Return the product of the multiplication of weights and input for each unit (i.e., each LSTM cell)
+    -> meaning the direct front impact computed per neural weights 
+    """
+    from sklearn.preprocessing import Normalizer
+    norm_scaler = Normalizer(norm = "l1")
 
-def compute_gradient_to_output(model, idx_to_target_layer, X, on_weight=False, wo_reset=False, by_batch=False):
+    # here, "multiply" instead of dot, b/c we want to get the output of each neural weight (not the final one)
+    out_kernel = x * t_w_kernel #np.multiply(x, t_w_kernel) # shape = (batch_size, time_steps, num_features)
+    if h is not None: # None -> we will skip the weights for hiddens states
+        out_recurr_kernel = h * t_w_recurr_kernel # shape = (batch_size, time_steps, num_units)
+        out = np.append(out_kernel, out_recurr_kernel, axis = -1) # shape:(batch_size,time_steps,(num_features+num_units))
+    else:
+        out = out_kernel # shape = (batch_size, time_steps, num_features)
+
+    # normalise
+    out = np.abs(out)
+    if with_norm: 
+        original_shape = out.shape
+        out = norm_scaler.fit_transform(out.flatten().reshape(1,-1)).reshape(-1,)
+        out = out.reshape(original_shape)
+
+    # N = num_features or num_features + num_units
+    out = np.einsum('ijk,ij->ijk', out, const) # shape = (batch_size, time_steps, N) 
+    return out
+
+
+def get_constants(gate, F, I, C, O, cell_states):
+    """
+    """
+    if gate == 'input':
+        return np.multiply(O, np.divide(
+            C, cell_states[:,1:,:], 
+            out = np.zeros_like(C), where = cell_states[:,1:,:] != 0))
+    elif gate == 'forget':
+        return np.multiply(O, np.divide(
+            cell_states[:,:-1,:], cell_states[:,1:,:], 
+            out = np.zeros_like(cell_states[:,:-1,:]), where = cell_states[:,1:,:] != 0))
+    elif gate == 'cand':
+        return np.multiply(O, np.divide(
+            I, cell_states[:,1:,:], 
+            out = np.zeros_like(C), where = cell_states[:,1:,:] != 0))
+    else: # output
+        return np.tanh(cell_states[:,1:,:])
+
+def lstm_local_front_FI_for_target_all(
+    x, h, num_units, 
+    t_w_kernels, t_w_recurr_kernels, consts, 
+    gate_orders = ['input', 'forget', 'cand', 'output']):
+    """
+    x = previous output
+    h = hidden state (-> should be computed using the layer)
+    t_w_kernels / t_w_recurr_kernels / consts: 
+        a group of neural weights that should be taken into account when measuring the impact.
+        arg consts is the corresponding group of constants that will be multiplied 
+        to each nueral weight's output, respectively
+    """
+    from sklearn.preprocessing import Normalizer
+    norm_scaler = Normalizer(norm = "l1")
+    from_front = []
+    for idx_to_unit in tqdm(range(num_units)):
+        out_combined = None
+        for gate in gate_orders:
+            # out's shape, (batch_size, time_steps, (num_features + num_units))	
+            # since the weights of each gate are added with the weights of the other gates, normalise later
+            out = compute_output_per_w(
+                x, h,
+                t_w_kernels[gate][:,idx_to_unit],
+                t_w_recurr_kernels[gate][:,idx_to_unit],
+                consts[gate][...,idx_to_unit],
+                with_norm = False)
+
+            if out_combined is None:
+                out_combined = out 
+            else:
+                out_combined = np.append(out_combined, out, axis = -1)
+
+        # the shape of out_combined => 
+        # 	(batch_size, time_steps, 4 * (num_features + num_units)) (since this is per unit)
+        # here, keep in mind that we have to use a scaler on the current out_combined 
+        # (for instance, divide by the final output (the last hidden state won't work here anymore, 
+        # as the summation of the current value differs from the original due to 
+        # the absence of act and the scaling in the middle, etc.)
+        original_shape = out_combined.shape
+        # normalised
+        scaled_out_combined = norm_scaler.fit_transform(np.abs(out_combined).flatten().reshape(1,-1)) 
+        scaled_out_combined = scaled_out_combined.reshape(original_shape) 
+        # mean out_combined's shape: ((num_features + num_units) * 4,) 
+        # for each neural weight, the average over both time step and the batch 
+        avg_scaled_out_combined = np.mean(
+            scaled_out_combined.reshape(-1, scaled_out_combined.shape[-1]), axis = 0) 
+        from_front.append(avg_scaled_out_combined)
+
+    # from_front's shape = (num_units, (num_features + num_units) * 4)
+    from_front = np.asarray(from_front)
+    print ("For lstm's front part of FI: {}".format(from_front.shape))
+    return from_front, gate_orders
+
+
+
+def compute_gradient_to_output(model, idx_to_target_layer, X, on_weight=False, wo_reset=False, by_batch=False, target_lens=None):
     """
     compute gradients normalisesd and averaged for a given input X
     on_weight = False -> on output of idx_to_target_layer'th layer
@@ -89,8 +196,15 @@ def compute_gradient_to_output(model, idx_to_target_layer, X, on_weight=False, w
     if not on_weight:
         # 対象となるレイヤの出力
         target = model.layers[idx_to_target_layer].output
+        lname = model.layers[idx_to_target_layer].__class__.__name__
+        prev_lname = model.layers[idx_to_target_layer-1].__class__.__name__
         # 勾配の形状を決定
-        grad_shape = tuple([num] + [int(v) for v in target.shape[1:]])
+        # 前のレイヤがLSTMでも, 次のレイヤの形状に影響を与える（系列長の次元が増えてしまう）
+        if not (model_utils.is_LSTM(lname) or model_utils.is_LSTM(prev_lname)):
+            grad_shape = tuple([num] + [int(v) for v in target.shape[1:]])
+        else:
+            max_len = X.shape[1] # X内の最大系列長
+            grad_shape = (num, max_len, target.shape[-1]) # (batch_size, num_units)
         gradient = np.zeros(grad_shape)
         logger.info(f"gradient_to_output.shape = {gradient.shape}")
         # チャンクごとに処理
@@ -117,6 +231,8 @@ def compute_gradient_to_output(model, idx_to_target_layer, X, on_weight=False, w
             # チャンクごとの勾配を格納
             gradient[chunk] = _gradient
         gradient = np.abs(gradient)
+        if model_utils.is_LSTM(lname) or model_utils.is_LSTM(prev_lname):
+            gradient = gradient[np.arange(gradient.shape[0]), target_lens - 1, :]
         reshaped_gradient = gradient.reshape(gradient.shape[0], -1)  # flatten
         norm_gradient = norm_scaler.fit_transform(reshaped_gradient)  # normalised
         mean_gradient = np.mean(norm_gradient, axis=0)  # compute mean for a given input
@@ -147,12 +263,16 @@ def compute_gradient_to_output(model, idx_to_target_layer, X, on_weight=False, w
     #             return ret_gradients
 
 
-def compute_gradient_to_loss(model, idx_to_target_layer, X, y, loss_func_name, by_batch=False, **kwargs):
+def compute_gradient_to_loss(model, idx_to_target_layer, X, y, loss_func_name, by_batch=False, target_lens=None, **kwargs):
     """
     compute gradients for the loss.
     kwargs contains the key-word argumenets required for the loss funation
     """
-    targets = model.layers[idx_to_target_layer].weights[:-1]
+    lname = model.layers[idx_to_target_layer].__class__.__name__
+    if not model_utils.is_LSTM(lname):
+        targets = model.layers[idx_to_target_layer].weights[:-1]
+    else:
+        targets = model.layers[idx_to_target_layer].weights
 
     if len(model.output.shape) == 3:
         y_tensor = tf.keras.Input(shape=(model.output.shape[-1],), name="labels")
@@ -192,7 +312,12 @@ def compute_gradient_to_loss(model, idx_to_target_layer, X, y, loss_func_name, b
         y_true = tf.Variable(y[chunk])
         with tf.GradientTape() as tape:
             y_pred = model(x)
-            loss = loss_func(y_true, y_pred)
+            if target_lens is None:
+                loss = loss_func(y_true, y_pred)
+            else:
+                # 計算グラフを保持して勾配計算ができるようにしつつ可変長に対応できるようlossを計算
+                losses = [loss_func(y_true[i], y_pred[i][target_lens[i]-1]) for i in range(y_pred.shape[0])]
+                loss = tf.reduce_sum(losses)
         # モデル出力のロスの対象のレイヤの重みに関する勾配を取得
         _gradients = tape.gradient(loss, targets)
         for i, _gradient in enumerate(_gradients):
@@ -200,6 +325,7 @@ def compute_gradient_to_loss(model, idx_to_target_layer, X, y, loss_func_name, b
 
     for i, gradients_p_chunk in enumerate(gradients):
         gradients[i] = np.abs(np.sum(np.asarray(gradients_p_chunk), axis=0))  # combine
+        logger.info(f"gradients[{i}].shape={gradients[i].shape}")
 
     # if not wo_reset:
     #     reset_keras(gradients + [loss_tensor, y_tensor])
@@ -227,12 +353,13 @@ def reset_keras(delete_list=None, frac=1):
         K.set_session(tf.Session(config=config))
 
 
-def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
+def compute_FI_and_GL(X, y, indices_to_target, target_weights, model, lens=None):
     norm_scaler = Normalizer(norm="l1")
     total_cands = {}
     FIs, grad_scndcr = None, None
     target_X = X[indices_to_target]
     target_y = y[indices_to_target]
+    target_lens = lens[indices_to_target] if lens is not None else None
     loss_func = model.loss  # str
 
     # 対象となるレイヤの重みを取得
@@ -257,6 +384,9 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
                 # 対象レイヤまでの中間層を出力するモデルを作成して出力を得る
                 t_model = Model(inputs=model.input, outputs=model.layers[idx_to_tl - 1].output)
                 prev_output = t_model.predict(target_X, verbose=-1)
+                prev_lname = model.layers[idx_to_tl - 1].__class__.__name__
+                if (model_utils.is_LSTM(prev_lname)) and (target_lens is not None):
+                    prev_output = prev_output[np.arange(prev_output.shape[0]), target_lens - 1, :]
             logger.info(f"t_w.shape = {t_w.shape}")
             logger.info(f"prev_output.shape = {prev_output.shape}")
 
@@ -277,7 +407,7 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
             logger.info(f"from_front.shape = {from_front.shape}")  # t_w (target weight)と同じshapeになる
 
             # from_behindは後続のレイヤに関する勾配
-            from_behind = compute_gradient_to_output(model, idx_to_tl, target_X)  # \partial O / \partial oの計算
+            from_behind = compute_gradient_to_output(model, idx_to_tl, target_X, target_lens=target_lens)  # \partial O / \partial oの計算
             logger.info(f"from_behind.shape = {from_behind.shape}")
             # Forward Impactの計算
             FIs = from_front * from_behind
@@ -285,7 +415,7 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
             ############ FI end #########
 
             ############ GL begin #######
-            grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
+            grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func, target_lens=target_lens)
             logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
             ############ GL end #########
 
@@ -421,6 +551,134 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
             grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, loss_func_name=loss_func)
             logger.info(f"grad_scndcr.shape: {grad_scndcr.shape}")
             ############ GL end #########
+        elif model_utils.is_LSTM(lname):
+            from scipy.special import expit as sigmoid
+
+            t_w_kernel, t_w_recurr_kernel = t_w
+            logger.info(f"t_w_kernel.shape={t_w_kernel.shape}, t_w_recurr_kernel.shape={t_w_recurr_kernel.shape}")
+            if model_utils.is_Input(type(model.layers[idx_to_tl - 1]).__name__):
+                prev_output = target_X
+            else:
+                # shape = (batch_size, time_steps, input_feature_size)
+                t_model = Model(inputs = model.input, outputs = model.layers[idx_to_tl - 1].output) 
+                prev_output = t_model.predict(target_X)
+            assert len(prev_output.shape) == 3, prev_output.shape
+            num_features = prev_output.shape[-1] # the dimension of features that will be processed by the model
+            
+            num_units = t_w_recurr_kernel.shape[0] 
+            assert t_w_kernel.shape[0] == num_features, "{} (kernel) vs {} (input)".format(t_w_kernel.shape[0], num_features)
+
+            # hidden state and cell state sequences computation
+            # generate a temporary model that only contains the target lstm layer 
+            # but with the modification to return sequences of hidden and cell states
+            temp_lstm_layer_inst = lstm_layer.LSTM_Layer(model.layers[idx_to_tl])
+            hstates_sequence, cell_states_sequence = temp_lstm_layer_inst.gen_lstm_layer_from_another(prev_output)
+            init_hstates, init_cell_states = lstm_layer.LSTM_Layer.get_initial_state(model.layers[idx_to_tl])
+            if init_hstates is None: 
+                init_hstates = np.zeros((len(target_X), num_units)) 
+            if init_cell_states is None:
+                # shape = (batch_size, num_units)
+                init_cell_states = np.zeros((len(target_X), num_units)) 
+        
+            # shape = (batch_size, time_steps + 1, num_units)
+            hstates_sequence = np.insert(hstates_sequence, 0, init_hstates, axis = 1)
+                # shape = (batch_size, time_steps + 1, num_units)
+            cell_states_sequence = np.insert(cell_states_sequence, 0, init_cell_states, axis = 1)
+            # bias = model.layers[idx_to_tl].get_weights()[-1] # shape = (4 * num_units,)
+            indices_to_each_gates = np.array_split(np.arange(num_units * 4), 4)
+
+            ## prepare all the intermediate outputs and the variables that will be used later
+            idx_to_input_gate = 0
+            idx_to_forget_gate = 1
+            idx_to_cand_gate = 2
+            idx_to_output_gate = 3
+
+            # input 
+            t_w_kernel_I = t_w_kernel[:, indices_to_each_gates[idx_to_input_gate]] 
+            t_w_recurr_kernel_I = t_w_recurr_kernel[:, indices_to_each_gates[idx_to_input_gate]] 
+            # bias_I = bias[indices_to_each_gates[idx_to_input_gate]] # NOTE: biasが必要なときは下の行にbiasを足すのを忘れるな
+            I = sigmoid(np.dot(prev_output, t_w_kernel_I) + np.dot(hstates_sequence[:,:-1,:], t_w_recurr_kernel_I))
+
+            # forget
+            t_w_kernel_F = t_w_kernel[:, indices_to_each_gates[idx_to_forget_gate]]
+            t_w_recurr_kernel_F = t_w_recurr_kernel[:, indices_to_each_gates[idx_to_forget_gate]]
+            # bias_F = bias[indices_to_each_gates[idx_to_forget_gate]]
+            F = sigmoid(np.dot(prev_output, t_w_kernel_F) + np.dot(hstates_sequence[:,:-1,:], t_w_recurr_kernel_F))
+
+            # cand
+            t_w_kernel_C = t_w_kernel[:, indices_to_each_gates[idx_to_cand_gate]]
+            t_w_recurr_kernel_C = t_w_recurr_kernel[:, indices_to_each_gates[idx_to_cand_gate]]
+            # bias_C = bias[indices_to_each_gates[idx_to_cand_gate]]
+            C = np.tanh(np.dot(prev_output, t_w_kernel_C) + np.dot(hstates_sequence[:,:-1,:], t_w_recurr_kernel_C))
+
+            # output
+            t_w_kernel_O = t_w_kernel[:, indices_to_each_gates[idx_to_output_gate]]
+            t_w_recurr_kernel_O = t_w_recurr_kernel[:, indices_to_each_gates[idx_to_output_gate]]
+            # bias_O = bias[indices_to_each_gates[idx_to_output_gate]]
+            # shape = (batch_size, time_steps, num_units)
+            O = sigmoid(np.dot(prev_output, t_w_kernel_O) + np.dot(hstates_sequence[:,:-1,:], t_w_recurr_kernel_O))
+
+            # set arguments to compute forward impact for the neural weights from these four gates
+            t_w_kernels = {
+                'input':t_w_kernel_I, 'forget':t_w_kernel_F, 
+                'cand':t_w_kernel_C, 'output':t_w_kernel_O}
+            t_w_recurr_kernels = {
+                'input':t_w_recurr_kernel_I, 'forget':t_w_recurr_kernel_F, 
+                'cand':t_w_recurr_kernel_C, 'output':t_w_recurr_kernel_O}
+
+            consts = {}
+            consts['input'] = get_constants('input', F, I, C, O, cell_states_sequence)
+            consts['forget'] = get_constants('forget', F, I, C, O, cell_states_sequence)
+            consts['cand'] = get_constants('cand', F, I, C, O, cell_states_sequence)
+            consts['output'] = get_constants('output', F, I, C, O, cell_states_sequence)
+
+            # from_front's shape = (num_units, (num_features + num_units) * 4)
+            # gate_orders = ['input', 'forget', 'cand', 'output']
+            from_front, gate_orders  = lstm_local_front_FI_for_target_all(
+                prev_output, hstates_sequence[:,:-1,:], num_units, 
+                t_w_kernels, t_w_recurr_kernels, consts)
+
+            from_front = from_front.T # ((num_features + num_units) * 4, num_units)
+            N_k_rk_w = int(from_front.shape[0]/4)
+            assert N_k_rk_w == num_features + num_units, "{} vs {}".format(N_k_rk_w, num_features + num_units)
+            logger.info(f"from_front.shape={from_front.shape}")
+            
+            ## from behind
+            from_behind = compute_gradient_to_output(model, idx_to_tl, target_X, by_batch = True, target_lens=target_lens) # shape = (num_units,)
+            logger.info(f"from_behind.shape={from_behind.shape}")
+
+            #t1 = time.time()
+            # shape = (N_k_rk_w, num_units) 
+            FIs_combined = from_front * from_behind
+            #print ("Shape", from_behind.shape, FIs_combined.shape)
+            #t2 = time.time()
+            #print ('Time for multiplying front and behind results: {}'.format(t2 - t1))
+            
+            # reshaping
+            FIs_kernel = np.zeros(t_w_kernel.shape) # t_w_kernel's shape (num_features, num_units * 4)
+            FIs_recurr_kernel = np.zeros(t_w_recurr_kernel.shape) # t_w_recurr_kernel's shape (num_units, num_units * 4)
+            # from (4 * N_k_rk_w, num_units) to 4 * (N_k_rk_w, num_units)
+            for i, FI_p_gate in enumerate(np.array_split(FIs_combined, 4, axis = 0)): 
+                # FI_p_gate's shape = (N_k_rk_w, num_units) 
+                # 	-> will divided into (num_features, num_units) & (num_units, num_units)
+                # local indices that will split FI_p_gate (shape = (N_k_rk_w, num_units))
+                # since we append the weights in order of a kernel weight and a recurrent kernel weight
+                indices_to_features = np.arange(num_features)
+                indices_to_units = np.arange(num_units) + num_features
+                #FIs_kernel[indices_to_features + (i * N_k_rk_w)] 
+                # = FI_p_gate[indices_to_features] # shape = (num_features, num_units)
+                #FIs_recurr_kernel[indices_to_units + (i * N_k_rk_w)] 
+                # = FI_p_gate[indices_to_units] # shape = (num_units, num_units)
+                FIs_kernel[:, i * num_units:(i+1) * num_units] = FI_p_gate[indices_to_features] # shape = (num_features, num_units)
+                FIs_recurr_kernel[:, i * num_units:(i+1) * num_units] = FI_p_gate[indices_to_units] # shape = (num_units, num_units)
+
+            #t3 =time.time()
+            FIs = [FIs_kernel, FIs_recurr_kernel] # [(num_features, num_units*4), (num_units, num_units*4)]
+            logger.info(f"FIs_kernel.shape={FIs_kernel.shape}, FIs_recurr_kernel.shape={FIs_recurr_kernel.shape}")
+            #print ('Time for formatting: {}'.format(t3 - t2))
+            
+            ## Gradient
+            grad_scndcr = compute_gradient_to_loss(model, idx_to_tl, target_X, target_y, by_batch=False, loss_func_name = loss_func, target_lens=target_lens)
 
         # 2種類のコストのペア
         if not model_utils.is_LSTM(lname):
@@ -428,26 +686,23 @@ def compute_FI_and_GL(X, y, indices_to_target, target_weights, model):
             pairs = np.asarray([grad_scndcr.flatten(), FIs.flatten()]).T
             total_cands[idx_to_tl] = {"shape": FIs.shape, "costs": pairs}
         else:
-            pass
-            # TODO: 以下はLSTMの場合の処理？============================================
-            # total_cands[idx_to_tl] = {"shape": [], "costs": []}
-            # pairs = []
-            # for _FIs, _grad_scndcr in zip(FIs, grad_scndcr):
-            #     pairs = np.asarray([_grad_scndcr.flatten(), _FIs.flatten()]).T
-            #     total_cands[idx_to_tl]["shape"].append(_FIs.shape)
-            #     total_cands[idx_to_tl]["costs"].append(pairs)
-            # ここまで==================================================================
+            total_cands[idx_to_tl] = {"shape": [], "costs": []}
+            pairs = []
+            for _FIs, _grad_scndcr in zip(FIs, grad_scndcr):
+                pairs = np.asarray([_grad_scndcr.flatten(), _FIs.flatten()]).T
+                total_cands[idx_to_tl]["shape"].append(_FIs.shape)
+                total_cands[idx_to_tl]["costs"].append(pairs)
 
     return total_cands
 
 
-def run_arachne_localize(X, y, indices_to_wrong, indices_to_correct, target_weights, model):
+def run_arachne_localize(X, y, indices_to_wrong, indices_to_correct, target_weights, model, len_for_loc=None):
     # compute FI and GL with changed inputs
     logger.info("compute FI and GL with wrong inputs")
-    total_cands_wrong = compute_FI_and_GL(X, y, indices_to_wrong, target_weights, model)
+    total_cands_wrong = compute_FI_and_GL(X, y, indices_to_wrong, target_weights, model, len_for_loc)
     # compute FI and GL with unchanged inputs
     logger.info("compute FI and GL with correct inputs")
-    total_cands_correct = compute_FI_and_GL(X, y, indices_to_correct, target_weights, model)
+    total_cands_correct = compute_FI_and_GL(X, y, indices_to_correct, target_weights, model, len_for_loc)
 
     indices_to_tl = list(total_cands_wrong.keys())
     costs_and_keys = []
@@ -455,19 +710,34 @@ def run_arachne_localize(X, y, indices_to_wrong, indices_to_correct, target_weig
     shapes = {}
 
     for idx_to_tl in indices_to_tl:
-        logger.info(f"idx_to_tl = {idx_to_tl}")
-        cost_from_wrong = total_cands_wrong[idx_to_tl]["costs"]
-        cost_from_correct = total_cands_correct[idx_to_tl]["costs"]
-        ## key: more influential to changed behaviour and less influential to unchanged behaviour
-        costs_combined = cost_from_wrong / (1.0 + cost_from_correct)  # shape = (N,2)
-        logger.info(f"costs_combined.shape = {costs_combined.shape}")
-        shapes[idx_to_tl] = total_cands_wrong[idx_to_tl]["shape"]
+        if not model_utils.is_LSTM(target_weights[idx_to_tl][1]):
+            logger.info(f"idx_to_tl = {idx_to_tl}")
+            cost_from_wrong = total_cands_wrong[idx_to_tl]["costs"]
+            cost_from_correct = total_cands_correct[idx_to_tl]["costs"]
+            ## key: more influential to changed behaviour and less influential to unchanged behaviour
+            costs_combined = cost_from_wrong / (1.0 + cost_from_correct)  # shape = (N,2)
+            logger.info(f"costs_combined.shape = {costs_combined.shape}")
+            shapes[idx_to_tl] = total_cands_wrong[idx_to_tl]["shape"]
 
-        for i, c in enumerate(costs_combined):
-            costs_and_keys.append(([idx_to_tl, i], c))  # ([index of target layer, index of neuron], cost)
-            # NOTE: np.unravel_index(i, shapes[idx_to_tl])で前層の何番目のニューロンからtarget層の何番目のニューロンという重みを特定できる
-            indices_to_nodes.append([idx_to_tl, np.unravel_index(i, shapes[idx_to_tl])])
-        # print(len(costs_combined)) # targetレイヤとその前層の重みの合計数に等しい
+            for i, c in enumerate(costs_combined):
+                costs_and_keys.append(([idx_to_tl, i], c))  # ([index of target layer, index of neuron], cost)
+                # NOTE: np.unravel_index(i, shapes[idx_to_tl])で前層の何番目のニューロンからtarget層の何番目のニューロンという重みを特定できる
+                indices_to_nodes.append([idx_to_tl, np.unravel_index(i, shapes[idx_to_tl])])
+            # print(len(costs_combined)) # targetレイヤとその前層の重みの合計数に等しい
+        else:
+            num = len(total_cands_wrong[idx_to_tl]['shape'])
+            shapes[idx_to_tl] = []
+            for idx_to_pair in range(num):
+                cost_from_wrong = total_cands_wrong[idx_to_tl]['costs'][idx_to_pair]
+                cost_from_correct = total_cands_correct[idx_to_tl]['costs'][idx_to_pair]
+                costs_combined = cost_from_wrong/(1. + cost_from_correct) # shape = (N,2)
+                logger.info(f"costs_combined.shape = {costs_combined.shape}")
+                shapes[idx_to_tl].append(total_cands_wrong[idx_to_tl]['shape'][idx_to_pair])
+
+                for i,c in enumerate(costs_combined):
+                    costs_and_keys.append(([(idx_to_tl, idx_to_pair), i], c))
+                    indices_to_nodes.append(
+                        [(idx_to_tl, idx_to_pair), np.unravel_index(i, shapes[idx_to_tl][idx_to_pair])])
 
     # costだけをリストにする
     costs = np.asarray([vs[1] for vs in costs_and_keys])  # len(costs)はモデルの重みの合計数に等しい（レイヤによらず）
@@ -580,7 +850,6 @@ if __name__ == "__main__":
             y_repair = np.array(y_repair)
             # print(sum(correct_predictions), len(correct_predictions))
 
-        # TODO: for text dataset
         elif dataset_type(task_name) == "text":
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             loss_fn = "binary_crossentropy"
@@ -588,7 +857,10 @@ if __name__ == "__main__":
             # repair_loaderを使ってバッチで予測
             pred_labels = []  # 予測ラベルの配列
             correct_predictions = []  # あってたかどうかの配列
-            X_repair, y_repair = [], []
+            X_repair, y_repair, len_repair = [], [], []
+            max_len = 0 # X_repair内の最大系列長
+            for data, _, _ in fixed_repair_loader:
+                max_len = max(max_len, data.shape[1])
             for batch_idx, (data, labels, data_lens) in enumerate(fixed_repair_loader):
                 data, labels = data.to(device), labels.to(device)
                 # data, labelsをnumpyに変換
@@ -606,20 +878,27 @@ if __name__ == "__main__":
                 # 全体の正解配列に追加
                 correct_predictions.extend(correctness_tmp)
                 # data, labelを追加
+                # dataに関してはmax_lenの長さにpaddingし直す
+                data = np.pad(data, ((0, 0), (0, max_len - data.shape[1]), (0, 0)), mode="constant", constant_values=0)
                 X_repair.extend(data)
                 y_repair.extend(labels)
+                len_repair.extend(data_lens)
             correct_predictions = np.array(correct_predictions)
             X_repair = np.array(X_repair)
             y_repair = np.array(y_repair)
+            len_repair = np.array(len_repair)
             print(f"{sum(correct_predictions)} / {len(correct_predictions)} = {sum(correct_predictions) / len(correct_predictions)}")
-            continue
 
         # 対象となる重みを取得
         target_weight = get_target_weights(model)
         # just for checking
         for i, v in target_weight.items():
             w, name = v
-            logger.info(f"layer: {i}, weight.shape: {w.shape}, name: {name}")
+            if not isinstance(w, list):
+                logger.info(f"layer: {i}, weight.shape: {w.shape}, name: {name}")
+            else:
+                for _w in w:
+                    logger.info(f"layer: {i}, weight.shape: {_w.shape}, name: {name}")
         # checking end
 
         # 正解したデータと失敗したデータに分ける
@@ -649,10 +928,17 @@ if __name__ == "__main__":
 
         # repairのために使うデータのインデックス
         indices_for_repair = target_indices_wrong + list(indices_to_correct)
-        X_for_repair, y_for_repair = (
-            X_repair[indices_for_repair],
-            y_repair[indices_for_repair],
-        )
+        if dataset_type(task_name) != "text":
+            X_for_repair, y_for_repair = (
+                X_repair[indices_for_repair],
+                y_repair[indices_for_repair],
+            )
+        else:
+            X_for_repair, y_for_repair, len_for_repair = (
+                X_repair[indices_for_repair],
+                y_repair[indices_for_repair],
+                len_repair[indices_for_repair],
+            )
         logger.info(f"X_for_repair.shape = {X_for_repair.shape}, y_for_repair.shape = {y_for_repair.shape}")
 
         # target_indicesと同じ数のデータを，正しい予測のデータからランダムにサンプリングする
@@ -697,7 +983,10 @@ if __name__ == "__main__":
             # localizationのために使うデータのインデックス
             indices_for_loc = target_indices_wrong + sampled_indices_correct
             # インデックスからデータを取得
-            X_for_loc, y_for_loc = X_repair[indices_for_loc], y_repair[indices_for_loc]
+            if dataset_type(task_name) != "text":
+                X_for_loc, y_for_loc = X_repair[indices_for_loc], y_repair[indices_for_loc]
+            else:
+                X_for_loc, y_for_loc, len_for_loc = X_repair[indices_for_loc], y_repair[indices_for_loc], len_repair[indices_for_loc]
             logger.info(f"X_for_loc.shape = {X_for_loc.shape}, y_for_loc.shape = {y_for_loc.shape}")
             # X_for_locやy_for_locのためにインデックスを振り直し
             num_wrong = len(target_indices_wrong)
@@ -707,13 +996,24 @@ if __name__ == "__main__":
 
             # そのexp_setting, fold, repで使われる, localization用とrepair用のデータを保存
             used_data_save_path = os.path.join(used_data_save_dir, f"X-y_for_loc-repair_fold-{k}.npz")
-            np.savez(
-                used_data_save_path,
-                X_for_loc=X_for_loc,
-                y_for_loc=y_for_loc,
-                X_for_repair=X_for_repair,
-                y_for_repair=y_for_repair,
-            )
+            if dataset_type(task_name) != "text":
+                np.savez(
+                    used_data_save_path,
+                    X_for_loc=X_for_loc,
+                    y_for_loc=y_for_loc,
+                    X_for_repair=X_for_repair,
+                    y_for_repair=y_for_repair,
+                )
+            else:
+                np.savez(
+                    used_data_save_path,
+                    X_for_loc=X_for_loc,
+                    y_for_loc=y_for_loc,
+                    len_for_loc=len_for_loc,
+                    X_for_repair=X_for_repair,
+                    y_for_repair=y_for_repair,
+                    len_for_repair=len_for_repair,
+                )
             logger.info(f"saved to {used_data_save_path}")
 
             # =====================================================================
@@ -724,6 +1024,7 @@ if __name__ == "__main__":
             s = time.clock()
             # logger.info(f"Start time: {s}")
             # localizationを実行
+            _len_for_loc = None if dataset_type(task_name) != "text" else len_for_loc
             indices_to_places_to_fix, front_lst = run_arachne_localize(
                 X_for_loc,
                 y_for_loc,
@@ -731,6 +1032,7 @@ if __name__ == "__main__":
                 sampled_indices_correct,
                 target_weight,
                 model,
+                _len_for_loc
             )
             logger.info(f"Places to fix {indices_to_places_to_fix}")
             # 終了時間計測
