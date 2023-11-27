@@ -23,8 +23,10 @@ dataset4show = {
 }
 clf = ["lr", "lgb", "rf"]
 metrics = ["acc", "precision", "recall", "f1", "roc_auc", "pr_auc"]
-used_metrics = ["acc", "precision", "recall", "roc_auc", "pr_auc"]
+used_metrics = ["acc", "precision", "recall", "pr_auc"]
 # used_metrics = ["roc_auc", "precision", "recall", "pr_auc"]
+# メトリクスごとの棒の色
+palette = {"acc": "#999999", "precision": "#ffa500", "recall": "#0059ff", "pr_auc": "#00ff26"}
 
 if __name__ == "__main__":
     # clfのうち最も精度の高い分類器の結果をグラフかしたい
@@ -58,12 +60,11 @@ if __name__ == "__main__":
                 # df = pd.concat([df, new_entry])
             df["val"] = df["val"].astype("float")
             # 全データセット終わったら描画する
-            palette = sns.color_palette(n_colors=len(used_metrics))
             plt.xticks(rotation=45)
             _error_bar = lambda x: (x.min(), x.max()) # エラーバーの表示方法. "se"なら標準誤差, "sd"なら標準偏差になるが今回は最小から最大値までの範囲を示すカスタムのエラーバーにする.
             _estimator = "median" # 中央値をとる. default: "mean"で平均
             sns.barplot(
-                data=df, x="dataset", y="val", hue="metric", palette=palette, ax=ax, errorbar=_error_bar, estimator=_estimator
+                data=df, x="dataset", y="val", hue="metric", palette=palette, ax=ax, errorbar=_error_bar, errcolor="black", estimator=_estimator
             )
             ax.set_title(f"{rb.capitalize()+'s'} pred. models ({method4show[method]})")
             ax.set_xlabel("Datasets")
