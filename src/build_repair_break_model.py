@@ -50,7 +50,7 @@ def calc_aucs(clf, X, y):
     return roc_auc, pr_auc
 
 
-def print_perf(clf, X, y):
+def print_perf(clf, X, y, output_log=True):
     """モデルのデータセットに対する各種メトリクス (acc, pre, rec, f1, roc-auc, pr-auc) を表示する
 
     Args:
@@ -67,12 +67,13 @@ def print_perf(clf, X, y):
     recall = recall_score(y, y_pred)
     f1 = f1_score(y, y_pred)
     roc_auc, pr_auc = calc_aucs(clf, X, y)
-    logger.info(f"Accuracy: {acc:.3}")
-    logger.info(f"Precision: {precision:.3}")
-    logger.info(f"Recall: {recall:.3}")
-    logger.info(f"F1: {f1:.3}")
-    logger.info(f"ROC-AUC: {roc_auc:.3}")
-    logger.info(f"PR-AUC: {pr_auc:.3}")
+    if output_log:
+        logger.info(f"Accuracy: {acc:.3}")
+        logger.info(f"Precision: {precision:.3}")
+        logger.info(f"Recall: {recall:.3}")
+        logger.info(f"F1: {f1:.3}")
+        logger.info(f"ROC-AUC: {roc_auc:.3}")
+        logger.info(f"PR-AUC: {pr_auc:.3}")
     return np.array([acc, precision, recall, f1, roc_auc, pr_auc])
 
 
