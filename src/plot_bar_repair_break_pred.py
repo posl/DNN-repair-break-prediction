@@ -10,7 +10,7 @@ sns.set(style="whitegrid", font_scale=2)
 
 methods = ["care", "apricot", "arachne"]
 method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne"}
-datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb"]
+datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
 dataset4show = {
     "credit": "Credit",
     "census": "Census",
@@ -18,10 +18,13 @@ dataset4show = {
     "c10": "C10",
     "fm": "FM",
     "gtsrb": "GTSRB",
+    "imdb": "IMDB",
+    "rtmr": "RTMR",
 }
 clf = ["lr", "lgb", "rf"]
 metrics = ["acc", "precision", "recall", "f1", "roc_auc", "pr_auc"]
-used_metrics = ["acc", "precision", "recall", "roc_auc"]
+used_metrics = ["acc", "precision", "recall", "roc_auc", "pr_auc"]
+# used_metrics = ["roc_auc", "precision", "recall", "pr_auc"]
 
 if __name__ == "__main__":
     # clfのうち最も精度の高い分類器の結果をグラフかしたい
@@ -31,9 +34,6 @@ if __name__ == "__main__":
             df = pd.DataFrame(columns=["dataset", "metric", "val", "clf"])
             ax = fig.add_subplot(1, len(methods), i + 1)  # メソッドごとにサブプロットを追加
             for dataset in datasets:
-                # print(method, dataset, rb)
-                if method == "arachne" and dataset in ["c10", "gtsrb"]:
-                    continue
                 path = f"/src/experiments/{method}/repair_break_model/{dataset}-{rb}-test.csv"
                 _df = pd.read_csv(path)[used_metrics]
                 for idx, row in _df.iterrows():
