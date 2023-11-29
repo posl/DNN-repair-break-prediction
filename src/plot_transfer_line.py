@@ -20,46 +20,7 @@ rep_color = "#ffa500"
 bre_color = "#0059ff"
 
 if __name__ == "__main__":
-    # methods transferability
-    mt_dir = f"/src/experiments/method-transferability"
-    df_repair = pd.read_csv(os.path.join(mt_dir, "all-repair.csv"))
-    df_break = pd.read_csv(os.path.join(mt_dir, "all-break.csv"))
-    # 1列目はmethod名なので除く
-    t_rep = df_repair.values[:, 1:].astype(np.float32)
-    t_bre = df_break.values[:, 1:].astype(np.float32)
-    # nanを除く
-    t_rep = t_rep[~np.isnan(t_rep)]
-    t_bre = t_bre[~np.isnan(t_bre)]
-    # 1次元にして昇順ソート
-    t_rep = np.sort(t_rep.flatten())
-    t_bre = np.sort(t_bre.flatten())
-    # t_rep, t_breそれぞれに1以上の値が含まれていたら, その値を1にする
-    t_rep = np.where(t_rep > 1, 1, t_rep)
-    t_bre = np.where(t_bre > 1, 1, t_bre)
-    print(t_rep.shape)
-    print(t_bre.shape)
-    # plot
     fig = plt.figure(figsize=(18, 9), facecolor="w")
-    ax = fig.add_subplot(1, 2, 1)
-    # 横軸
-    x = np.arange(len(t_rep)) / len(t_rep)
-    # 折れ線描画
-    plt.plot(x, t_rep, label="repairs", color=rep_color, **plot_style)
-    plt.plot(x, t_bre, label="breaks", color=bre_color, **plot_style)
-    # 50%の縦線
-    plt.vlines(0.5, min(min(t_rep), min(t_bre)), 1, linestyles="dashed", linewidth=3, color="red")
-    # グラフのタイトルと軸ラベルを設定
-    ax.set_title("Transferability for Repair Methods")
-    ax.set_xlabel("")
-    ax.set_ylabel("Transferability Scores")
-    ax.set_ylim(min(min(t_rep), min(t_bre)), None)
-    ax.set_xlim(0, 1)
-    plt.legend()
-    # グラフを表示
-    fig.tight_layout()
-    # plt.savefig("./trans_methods.pdf", bbox_inches="tight", dpi=300)
-
-
     # datasets transferability
     t_rep_list, t_bre_list = [], [] 
     for method in ["care", "apricot", "arachne"]:
@@ -83,7 +44,7 @@ if __name__ == "__main__":
     print(t_rep.shape)
     print(t_bre.shape)
     # plot
-    ax = fig.add_subplot(1, 2, 2)
+    ax = fig.add_subplot(1, 2, 1)
     # 横軸
     x = np.arange(len(t_rep)) / len(t_rep)
     # 折れ線描画
@@ -95,10 +56,45 @@ if __name__ == "__main__":
     # グラフのタイトルと軸ラベルを設定
     ax.set_title("Transferability for Datasets")
     ax.set_xlabel("")
-    # ax.set_ylabel("Transferability Scores")
+    ax.set_ylabel("Transferability Scores")
     ax.set_ylim(min(min(t_rep), min(t_bre)), None)
     ax.set_xlim(0, 1)
     plt.legend(loc="lower right")
+
+    # methods transferability
+    mt_dir = f"/src/experiments/method-transferability"
+    df_repair = pd.read_csv(os.path.join(mt_dir, "all-repair.csv"))
+    df_break = pd.read_csv(os.path.join(mt_dir, "all-break.csv"))
+    # 1列目はmethod名なので除く
+    t_rep = df_repair.values[:, 1:].astype(np.float32)
+    t_bre = df_break.values[:, 1:].astype(np.float32)
+    # nanを除く
+    t_rep = t_rep[~np.isnan(t_rep)]
+    t_bre = t_bre[~np.isnan(t_bre)]
+    # 1次元にして昇順ソート
+    t_rep = np.sort(t_rep.flatten())
+    t_bre = np.sort(t_bre.flatten())
+    # t_rep, t_breそれぞれに1以上の値が含まれていたら, その値を1にする
+    t_rep = np.where(t_rep > 1, 1, t_rep)
+    t_bre = np.where(t_bre > 1, 1, t_bre)
+    print(t_rep.shape)
+    print(t_bre.shape)
+    # plot
+    ax = fig.add_subplot(1, 2, 2)
+    # 横軸
+    x = np.arange(len(t_rep)) / len(t_rep)
+    # 折れ線描画
+    plt.plot(x, t_rep, label="repairs", color=rep_color, **plot_style)
+    plt.plot(x, t_bre, label="breaks", color=bre_color, **plot_style)
+    # 50%の縦線
+    plt.vlines(0.5, min(min(t_rep), min(t_bre)), 1, linestyles="dashed", linewidth=3, color="red")
+    # グラフのタイトルと軸ラベルを設定
+    ax.set_title("Transferability for Repair Methods")
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_ylim(min(min(t_rep), min(t_bre)), None)
+    ax.set_xlim(0, 1)
+    plt.legend()
     # グラフを表示
     fig.tight_layout()
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)
