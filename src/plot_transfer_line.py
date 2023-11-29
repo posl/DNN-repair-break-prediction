@@ -8,19 +8,32 @@ from lib.log import set_exp_logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 # plot setting
-sns.set(style="whitegrid", font_scale=3)
+sns.set(style="white", font_scale=2.5)
 
 plot_style = {
     "linestyle": "solid",
     "linewidth": 3,
-    "marker": "o",
+    "marker": None,
     "markersize": 6,
 }
 rep_color = "#ffa500"
 bre_color = "#0059ff"
 
+def ax_setting(ax):
+    ### spine setting
+    ax.spines['top'].set_linewidth(0)
+    ax.spines['right'].set_linewidth(0)
+    ax.spines['left'].set_linewidth(2)
+    ax.spines['left'].set_color('gray')
+    ax.spines['bottom'].set_linewidth(2)
+    ax.spines['bottom'].set_color('gray')
+    ax.yaxis.grid(linestyle="solid", lw=1, alpha=1, color="lightgray")
+    # ax.plot(np.linspace(8,370,1000), np.ones(1000)*100, 'w-', lw=2)
+    ax.set_axisbelow(True)
+    ax.legend(loc="lower right", facecolor='white', edgecolor='none')
+
 if __name__ == "__main__":
-    fig = plt.figure(figsize=(18, 9), facecolor="w")
+    fig = plt.figure(figsize=(16, 6), facecolor="w")
     # datasets transferability
     t_rep_list, t_bre_list = [], [] 
     for method in ["care", "apricot", "arachne"]:
@@ -54,12 +67,12 @@ if __name__ == "__main__":
     # 50%の縦線
     plt.vlines(0.5, min(min(t_rep), min(t_bre)), 1, linestyles="dashed", linewidth=3, color="red")
     # グラフのタイトルと軸ラベルを設定
-    ax.set_title("Transferability for Datasets")
+    ax.set_title("(a) Transferability for Datasets")
     ax.set_xlabel("")
     ax.set_ylabel("Transferability Scores")
     ax.set_ylim(min(min(t_rep), min(t_bre)), None)
     ax.set_xlim(0, 1)
-    plt.legend(loc="lower right")
+    ax_setting(ax)
 
     # methods transferability
     mt_dir = f"/src/experiments/method-transferability"
@@ -89,12 +102,12 @@ if __name__ == "__main__":
     # 50%の縦線
     plt.vlines(0.5, min(min(t_rep), min(t_bre)), 1, linestyles="dashed", linewidth=3, color="red")
     # グラフのタイトルと軸ラベルを設定
-    ax.set_title("Transferability for Repair Methods")
+    ax.set_title("(b) Transferability for Repair Methods")
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_ylim(min(min(t_rep), min(t_bre)), None)
     ax.set_xlim(0, 1)
-    plt.legend()
+    ax_setting(ax)
     # グラフを表示
     fig.tight_layout()
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)

@@ -74,10 +74,17 @@ if __name__ == "__main__":
                 ax.set_ylabel("")
                 ax.set_xlabel("")
             ax.set_ylim(0, 1)
+            ### spine setting
+            ax.spines['top'].set_linewidth(0)
+            ax.spines['right'].set_linewidth(0)
+            ax.spines['left'].set_linewidth(2)
+            ax.spines['left'].set_color('gray')
+            ax.spines['bottom'].set_linewidth(2)
+            ax.spines['bottom'].set_color('gray')
             ax.legend().set_visible(False)
         # plt.legend(loc="upper left", bbox_to_anchor=(1,1))
         plt.legend(
-            bbox_to_anchor=(-0.25, -0.25), loc="upper center", ncol=len(used_metrics)
+            bbox_to_anchor=(-0.25, -0.25), loc="upper center", ncol=len(used_metrics), facecolor='white', edgecolor='none'
         )
         fig.tight_layout()
         fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)
