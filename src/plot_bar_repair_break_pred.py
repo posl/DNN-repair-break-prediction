@@ -31,7 +31,7 @@ palette = {"acc": "#999999", "precision": "#ffa500", "recall": "#0059ff", "pr_au
 if __name__ == "__main__":
     # clfのうち最も精度の高い分類器の結果をグラフかしたい
     for rb in ["repair", "break"]:
-        fig = plt.figure(figsize=(18, 6), facecolor="w")
+        fig = plt.figure(figsize=(18, 4), facecolor="w")
         for i, method in enumerate(methods):
             df = pd.DataFrame(columns=["dataset", "metric", "val", "clf"])
             ax = fig.add_subplot(1, len(methods), i + 1)  # メソッドごとにサブプロットを追加
@@ -67,16 +67,17 @@ if __name__ == "__main__":
                 data=df, x="dataset", y="val", hue="metric", palette=palette, ax=ax, errorbar=_error_bar, errcolor="black", estimator=_estimator
             )
             ax.set_title(f"{rb.capitalize()+'s'} pred. models ({method4show[method]})")
-            ax.set_xlabel("Datasets")
             if i == 0:
                 ax.set_ylabel("Val. of metrics")
+                ax.set_xlabel("Datasets")
             else:
                 ax.set_ylabel("")
+                ax.set_xlabel("")
             ax.set_ylim(0, 1)
             ax.legend().set_visible(False)
         # plt.legend(loc="upper left", bbox_to_anchor=(1,1))
         plt.legend(
-            bbox_to_anchor=(-0.7, -0.25), loc="upper center", ncol=len(used_metrics)
+            bbox_to_anchor=(-0.25, -0.25), loc="upper center", ncol=len(used_metrics)
         )
         fig.tight_layout()
         fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.1, wspace=0.2)
