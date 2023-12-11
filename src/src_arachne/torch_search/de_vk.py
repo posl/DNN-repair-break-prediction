@@ -42,6 +42,7 @@ class DE_searcher(Searcher):
         batch_size=None,
         is_lstm=False,
         is_multi_label=True,
+        len_for_repair=None,
     ):
         """ """
         super(DE_searcher, self).__init__(
@@ -58,6 +59,7 @@ class DE_searcher(Searcher):
             batch_size=batch_size,
             is_lstm=is_lstm,
             is_multi_label=is_multi_label,
+            len_for_repair=len_for_repair,
         )
 
         # fitness computation related initialisation
@@ -107,11 +109,13 @@ class DE_searcher(Searcher):
             deltas[idx_to_tl][tuple(inner_indices)] = patch_candidate[i]
 
         # 以下で目的関数の計算（論文のeq3）, deltasをセットして予測結果を取得する
-        if not self.lstm_mdl:
-            loss_v = self.move(deltas)
-        else:
-            # here, we don't have to be worry about the corre_predictins -> alrady done in move_v3.
-            loss_v = self.move_lstm(deltas)
+        # NOTE: moveメソッド内でlstmかどうかで処理を分けるように変更
+        loss_v = self.move(deltas)
+        # if not self.is_lstm:
+        #     loss_v = self.move(deltas)
+        # else:
+        #     # here, we don't have to be worry about the corre_predictins -> alrady done in move_v3.
+        #     loss_v = self.move_lstm(deltas)
         # assert predictions is not None
 
         # 以下で目的関数の計算（論文のeq4）

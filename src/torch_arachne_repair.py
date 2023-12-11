@@ -1,5 +1,6 @@
 import os, sys, re, time, argparse, pickle
 from collections import defaultdict
+from collections.abc import Iterable
 from ast import literal_eval
 
 import numpy as np
@@ -46,28 +47,19 @@ def set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device):
     model: keras model
         deltasで示される重みをセットした後の, 修正後のモデル
     """
-
     for idx_to_tl, delta in deltas.items():
+        if isinstance(idx_to_tl, Iterable):
+            idx_to_tl, idx_to_w = idx_to_tl
+        else:
+            idx_to_tl = idx_to_tl
         tl = dic_keras_lid_to_torch_layers[idx_to_tl]
         lname = tl.__class__.__name__
         if lname == "Conv2d" or lname == "Linear":
             tl.weight.data = torch.from_numpy(delta).to(device)
-        # TODO: LSTMレイヤへの対応
         elif lname == "LSTM":
-            pass
-            # if idx_to_w == 0:  # kernel
-            #     new_kernel_w = delta  # use the full
-            #     new_recurr_kernel_w = self.init_weights[(idx_to_t_mdl_l, 1)]
-            # elif idx_to_w == 1:
-            #     new_recurr_kernel_w = delta
-            #     new_kernel_w = self.init_weights[(idx_to_t_mdl_l, 0)]
-            # else:
-            #     print("{} not allowed".format(idx_to_w), idx_to_t_mdl_l, idx_to_tl)
-            #     assert False
-            # set kernel, recurr kernel, bias
-            # fn_mdl.layers[idx_to_t_mdl_l].set_weights(
-            #     [new_kernel_w, new_recurr_kernel_w, self.init_biases[idx_to_t_mdl_l]]
-            # )
+            for i, tp in enumerate(tl.parameters()):
+                if i == idx_to_w:
+                    tp.data = torch.from_numpy(delta).to(device)
         else:
             print("{} not supported".format(lname))
             assert False
@@ -116,6 +108,7 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
             tmp_pred = model.predict(x, device=device)["pred"].to("cpu").detach().numpy().copy()
             pred_labels.append(tmp_pred)
         pred_labels = np.concatenate(pred_labels, axis=0)
+        len_for_repair = None
     else:
         len_for_repair = used_data["len_for_repair"]
         pred_labels = model.predict(X_for_repair, len_for_repair, device=device)["pred"].to("cpu").detach().numpy().copy()
@@ -156,11 +149,14 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
     logger.info(f"places_list (keras-styled shape): {places_list}")
     tl_list = []
     for tl in _tl_list:
-        if isinstance(literal_eval(tl), tuple):
-            tl_list.append(tl[0])
-        else:
+        if isinstance(tl, int): 
             tl_list.append(tl)
-    indices_to_ptarget_layers = sorted(tl_list)
+        elif isinstance(literal_eval(tl), int):
+            tl_list.append(int(tl))
+        elif isinstance(literal_eval(tl), tuple):
+            tl = literal_eval(tl)
+            tl_list.append(tl[0])
+    indices_to_ptarget_layers = set(sorted(tl_list))
     logger.info(f"Patch target layers: {indices_to_ptarget_layers}")
 
     return (
@@ -172,6 +168,7 @@ def load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, dev
         indices_to_wrong,
         misclf_true,
         misclf_pred,
+        len_for_repair
     )
 
 
@@ -183,8 +180,11 @@ def reshape_places_tf_to_torch(places_list):
     for lid, nid in places_list:
         if len(nid) == 4:  # Conv2d
             place = (lid, (nid[3], nid[2], nid[0], nid[1]))
-        elif len(nid) == 2:  # Linear
-            place = (lid, (nid[1], nid[0]))
+        elif len(nid) == 2:  # Linear or LSTM
+            if isinstance(lid, int): # Linear
+                place = (lid, (nid[1], nid[0]))
+            else: # LSTM
+                place = (literal_eval(lid), (nid[1], nid[0]))
         reshaped_places_list.append(place)
     return reshaped_places_list
 
@@ -258,10 +258,11 @@ if __name__ == "__main__":
         indices_to_wrong,
         misclf_true,
         misclf_pred,
+        len_for_repair
     ) = load_localization_info(arachne_dir, model_dir, task_name, model, k, rep, device)
     # 特定したニューロン位置のインデックスをtfからtorchにする
     places_list = reshape_places_tf_to_torch(places_list)
-    logger.info(f"Reshaped places list = {places_list}")
+    logger.info(f"Reshaped places list = {places_list}")    
 
     # 修正後の重みのファイル名
     file_name = f"misclf-top{topn}-{misclf_true}to{misclf_pred}_fold-{k}.pkl"
@@ -280,9 +281,17 @@ if __name__ == "__main__":
         deltas = {}
         for lid in indices_to_ptarget_layers:
             target_layer = dic_keras_lid_to_torch_layers[lid]
-            if dataset_type(task_name) != "text":
+            lname = target_layer.__class__.__name__
+            if lname != "LSTM":
                 target_param = target_layer.weight
                 deltas[lid] = target_param
+            else:
+                target_param = target_layer.weight_ih_l0
+                deltas[(lid, 0)] = target_param
+                # recurrent_kernel
+                target_param = target_layer.weight_hh_l0
+                deltas[(lid, 1)] = target_param
+        
         # この間でdeltasをArachneの手法で更新していけばいいという話
         # searcherのinitializerに入れる変数をここで定義 HACK: 外部化
         num_label = len(set(y_for_repair))
@@ -305,6 +314,8 @@ if __name__ == "__main__":
             model=model,
             patch_aggr=patch_aggr,
             batch_size=batch_size,
+            is_lstm=(dataset_type(task_name) == "text"),
+            len_for_repair=len_for_repair
         )
 
         logger.info(f"Start DE search...")
@@ -325,12 +336,13 @@ if __name__ == "__main__":
             model, deltas, dic_keras_lid_to_torch_layers, device
         )
 
+        collate_fn = None if dataset_type(task_name) != "text" else pad_collate
         # TODO: できたらtrain, repair, testの予測結果を出して比較する. keras ver. 同様にis_corr_dictみたいな名前のやつを保存する
         # train, repair, test dataloader
         train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = fix_dataloader(torch.load(train_data_path))
+        train_loader = fix_dataloader(torch.load(train_data_path), collate_fn=collate_fn)
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        repair_loader = fix_dataloader(torch.load(repair_data_path))
+        repair_loader = fix_dataloader(torch.load(repair_data_path), collate_fn=collate_fn)
         test_data_path = os.path.join(data_dir, f"test_loader.pt")
         test_loader = torch.load(
             test_data_path
@@ -338,13 +350,13 @@ if __name__ == "__main__":
         # train, repair, testそれぞれのfix_loaderに対してeval_modelを実行
         logger.info("Eval the repaired model with patches...")
         train_ret_dict = eval_model(
-            repaired_model, train_loader, is_binary=is_binary, device=device
+            repaired_model, train_loader, dataset_type(task_name), is_binary=is_binary, device=device
         )
         repair_ret_dict = eval_model(
-            repaired_model, repair_loader, is_binary=is_binary, device=device
+            repaired_model, repair_loader, dataset_type(task_name), is_binary=is_binary, device=device
         )
         test_ret_dict = eval_model(
-            repaired_model, test_loader, is_binary=is_binary, device=device
+            repaired_model, test_loader, dataset_type(task_name), is_binary=is_binary, device=device
         )
         # 各サンプルに対する予測の正解(1)か不正解か(0)のnumpy配列を取得
         is_corr_train = train_ret_dict["correctness_arr"]

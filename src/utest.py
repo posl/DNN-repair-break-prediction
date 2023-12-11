@@ -67,7 +67,6 @@ if __name__ == "__main__":
     obj_col = "repaired" if rb == "repair" else "broken"
 
     # 定数たち
-    # FIXME: 実行する前に以下の変数はチェックすること
     methods = ["care", "apricot", "arachne"]
     datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
 
@@ -86,9 +85,6 @@ if __name__ == "__main__":
         res_arr_ds_tex = []
         for method in methods:
             print(f"{method}, {dataset}\n==========================")
-            # FIXME: 一時的なif
-            if method == "arachne" and dataset in ["imdb", "rtmr"]:
-                continue
             df = get_df(method, dataset, rb)
             print(df.shape)
             print(df[obj_col].value_counts())

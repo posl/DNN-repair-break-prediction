@@ -39,6 +39,7 @@ class Searcher(object):
         batch_size=None,
         is_multi_label=True,
         is_lstm=False,
+        len_for_repair=None,
     ):
         """ """
         super(Searcher, self).__init__()
@@ -47,6 +48,7 @@ class Searcher(object):
         # data related initialisation
         self.num_label = num_label
         self.inputs = inputs
+        self.lens = len_for_repair
         self.task_name = task_name
         from collections.abc import Iterable
 
@@ -64,10 +66,14 @@ class Searcher(object):
         else:
             self.labels = labels
             self.ground_truth_labels = labels
-        logger.info(f"inputs.shape: {self.inputs.shape}, labels.shape : {self.labels.shape}")
+        if self.lens is not None:
+            logger.info(f"inputs.shape: {self.inputs.shape}, labels.shape : {self.labels.shape}, lens.shape : {self.lens.shape}")
+        else:
+            logger.info(f"inputs.shape: {self.inputs.shape}, labels.shape : {self.labels.shape}")
+
 
         self.mdl = model
-        self.lstm_mdl = is_lstm
+        self.is_lstm = is_lstm
 
         self.indices_to_correct = indices_to_correct
         self.indices_to_wrong = indices_to_wrong
@@ -105,25 +111,13 @@ class Searcher(object):
             if lname == "Conv2d" or lname == "Linear":
                 self.init_weights[idx_to_tl] = tl.weight.cpu().detach().numpy()
                 self.init_biases[idx_to_tl] = tl.bias.cpu().detach().numpy()
-            # TODO:
             elif lname == "LSTM":
-                pass
+                for i, (name, param) in enumerate(tl.named_parameters()):
+                    # logger.info(f"name={name}, param.shape={param.shape}")
+                    self.init_weights[(idx_to_tl, i)] = param.cpu().detach().numpy()
             else:
                 print("Not supported layer: {}".format(lname))
                 assert False
-            # NOTE: TF向けの古い実装
-            # ws = self.mdl.layers[idx_to_tl].get_weights()
-            # lname = type(self.mdl.layers[idx_to_tl]).__name__
-            # if self.model_util.is_FC(lname) or self.model_util.is_C2D(lname):
-            #     self.init_weights[idx_to_tl] = ws[0]
-            #     self.init_biases[idx_to_tl] = ws[1]
-            # elif self.model_util.is_LSTM(lname):
-            #     for i in range(2):  # get only the kernel and recurrent kernel, not the bias
-            #         self.init_weights[(idx_to_tl, i)] = ws[i]
-            #     self.init_biases[idx_to_tl] = ws[-1]
-            # else:
-            #     print("Not supported layer: {}".format(lname))
-            #     assert False
 
     def move(self, deltas):
         """
@@ -156,7 +150,7 @@ class Searcher(object):
 
         combined_losses = (new_losses_of_correct, new_losses_of_wrong)
         # print (self.is_multi_label,
-        # self.lstm_mdl, self.num_label, num_corr_true,
+        # self.is_lstm, self.num_label, num_corr_true,
         # self.np.sum(1/(losses_of_correct[indices_to_corr_false] + 1)),
         # num_wrong_true, self.np.sum(1/(losses_of_wrong[indices_to_wrong_false] + 1)))
         return combined_losses
@@ -182,13 +176,14 @@ class Searcher(object):
             if lname == "Conv2d" or lname == "Linear":
                 tl.weight.data = torch.from_numpy(delta).to(self.device)
                 # tl.set_weights([delta, self.init_biases[idx_to_t_mdl_l]])
-            # TODO:
             elif lname == "LSTM":
-                pass
-                # if idx_to_w == 0:  # kernel
+                for i, tp in enumerate(tl.parameters()):
+                    if i == idx_to_w:
+                        tp.data = torch.from_numpy(delta).to(self.device)
+                # if idx_to_w == 0:  # kernelを新しくする
                 #     new_kernel_w = delta  # use the full
                 #     new_recurr_kernel_w = self.init_weights[(idx_to_t_mdl_l, 1)]
-                # elif idx_to_w == 1:
+                # elif idx_to_w == 1: # recurrent kernelを新しくする
                 #     new_recurr_kernel_w = delta
                 #     new_kernel_w = self.init_weights[(idx_to_t_mdl_l, 0)]
                 # else:
@@ -211,9 +206,15 @@ class Searcher(object):
             # chunkを使ってバッチを取り出す
             i = self.inputs[chunk]
             l = self.ground_truth_labels[chunk]
-            # バッチへの予測
-            out = self.mdl.predict(torch.from_numpy(i).to(self.device), device=self.device)
-            pred, prob = out["pred"].cpu(), out["prob"].cpu()
+            if self.is_lstm:
+                lens = self.lens[chunk]
+                # バッチへの予測
+                out = self.mdl.predict(torch.from_numpy(i).to(self.device), lens, device=self.device)
+                pred, prob = out["pred"].cpu(), out["prob"].cpu()
+            else:
+                # バッチへの予測
+                out = self.mdl.predict(torch.from_numpy(i).to(self.device), device=self.device)
+                pred, prob = out["pred"].cpu(), out["prob"].cpu()
             # ロスの計算
             loss = loss_fn(prob, torch.from_numpy(l)).cpu().detach().numpy()
             # 予測ラベルと真のラベル
@@ -354,7 +355,7 @@ class Searcher(object):
                 int: the number of patched
                 float: percentage of the number of patched)
         """
-        if self.lstm_mdl:
+        if self.is_lstm:
             correctly_classified, perc_correctly_classifed = self.get_results_of_target_lstm(
                 deltas, self.indices_to_wrong
             )
@@ -375,7 +376,7 @@ class Searcher(object):
                 float: percentage of the number of patched)
         """
         target_indices = self.indices_to_correct
-        if self.lstm_mdl:
+        if self.is_lstm:
             correctly_classified, perc_correctly_classifed = self.get_results_of_target_lstm(deltas, target_indices)
         else:
             correctly_classified, perc_correctly_classifed, _ = self.get_results_of_target(deltas, target_indices)
