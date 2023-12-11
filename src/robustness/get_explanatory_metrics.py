@@ -43,48 +43,17 @@ if __name__ == "__main__":
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{ds}/"
-    data_files = os.listdir(data_dir)
+    dl_files = [f for f in os.listdir(data_dir) if f.endswith("loader.pt")]
     model_dir = f"/src/models/{ori_ds}/{ori_ds}-training-setting1"
 
-    # データを読み込んでnpyの辞書を作る
-    npy_dic = {}
-    for file_name in data_files:
-        file_path = os.path.join(data_dir, file_name)
-        # file_nameからnpyを除いた部分だけ取得
-        key = file_name.replace(".npy", "")
-        # npyをロード
-        npy_dic[key] = torch.from_numpy(np.load(file_path).astype(np.float32)).clone()
-        logger.info(f"{key}, {npy_dic[key].shape}")
-
-    # 読み込んだnpyからdataloaderを作成
-    # データセットにより異なる処理をしないといけない
+    # dataloaderを読み込む
     dl_dic = {}
-    if ds == "fmc":
-        # train, testに対するTensorDatasetを作成
-        train_x = npy_dic["fmnist-c-train"]
-        test_x = npy_dic["fmnist-c-test"]
-        # channelの次元をバッチの次に追加
-        train_x = train_x.unsqueeze(1)
-        test_x = test_x.unsqueeze(1)
-        train_y = npy_dic["fmnist-c-train-labels"].to(torch.long)
-        test_y = npy_dic["fmnist-c-test-labels"].to(torch.long)
-        train_ds = TensorDataset(train_x, train_y)
-        test_ds = TensorDataset(test_x, test_y)
-        # DataLoaderにして辞書に入れる
-        dl_dic["train"] = DataLoader(train_ds, batch_size=32, shuffle=False)
-        dl_dic["test"] = DataLoader(test_ds, batch_size=32, shuffle=False)
-    elif ds == "c10c":
-        labels = npy_dic["labels"].to(torch.long)
-        dl_dic = {}
-        # Corruptionの種類ごとにTensorDatasetを作成
-        for k, v in npy_dic.items():
-            if "labels" in k:
-                continue
-            # まずはtensor datasetをつくる
-            # vはchannel_lastで保存されてるのでtorchのモデルで処理できるようにchannel_firstにする
-            v = v.permute(0, 3, 1, 2)
-            corruption_ds = TensorDataset(v, labels)
-            dl_dic[k] = DataLoader(corruption_ds, batch_size=32, shuffle=False)
+    for file_name in dl_files:
+        file_path = os.path.join(data_dir, file_name)
+        # file_nameから'_loader.pt'を除いた部分だけ取得
+        key = file_name.replace("_loader.pt", "")
+        dl_dic[key] = torch.load(file_path)
+        logger.info(f"loaded {key} dataloader.")
     
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):

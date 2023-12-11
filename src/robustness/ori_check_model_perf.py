@@ -92,7 +92,7 @@ if __name__ == "__main__":
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{ds}/"
     # dataloaderのファイル名だけ取り出す
-    dl_files = [f for f in os.listdir(data_dir) if f.endswith(".pt")]
+    dl_files = [f for f in os.listdir(data_dir) if f.endswith("loader.pt")]
     model_dir = f"/src/models/{ori_ds}/{ori_ds}-training-setting1"
 
     # 正解不正解の配列を保存するためのdir

@@ -19,7 +19,7 @@ if __name__ == "__main__":
         ds_type = dataset_type(ori_ds)
     
         # モデルとデータの読み込み先のディレクトリ
-        data_dir = f"/src/data/{ds}/"
+        data_dir = f"/src/data/{ds}/raw_data"
         data_files = os.listdir(data_dir)
         model_dir = f"/src/models/{ori_ds}/{ori_ds}-training-setting1"
 
@@ -37,20 +37,20 @@ if __name__ == "__main__":
         dl_dic = {}
         if ds == "fmc":
             # train, testに対するTensorDatasetを作成
-            train_x = npy_dic["fmnist-c-train"]
-            test_x = npy_dic["fmnist-c-test"]
+            train_x = npy_dic["fmnist-c-train"] / 255
+            test_x = npy_dic["fmnist-c-test"] / 255
             # channelの次元をバッチの次に追加
             train_x = train_x.unsqueeze(1)
             test_x = test_x.unsqueeze(1)
-            train_y = npy_dic["fmnist-c-train-labels"]
-            test_y = npy_dic["fmnist-c-test-labels"]
+            train_y = npy_dic["fmnist-c-train-labels"].to(int)
+            test_y = npy_dic["fmnist-c-test-labels"].to(int)
             train_ds = TensorDataset(train_x, train_y)
             test_ds = TensorDataset(test_x, test_y)
             # DataLoaderにして辞書に入れる
             dl_dic["train"] = DataLoader(train_ds, batch_size=32, shuffle=False)
             dl_dic["test"] = DataLoader(test_ds, batch_size=32, shuffle=False)
         elif ds == "c10c":
-            labels = npy_dic["labels"]
+            labels = npy_dic["labels"].to(int)
             dl_dic = {}
             # Corruptionの種類ごとにTensorDatasetを作成
             for k, v in npy_dic.items():
@@ -58,12 +58,12 @@ if __name__ == "__main__":
                     continue
                 # まずはtensor datasetをつくる
                 # vはchannel_lastで保存されてるのでtorchのモデルで処理できるようにchannel_firstにする
-                v = v.permute(0, 3, 1, 2)
+                v = v.permute(0, 3, 1, 2) / 255
                 corruption_ds = TensorDataset(v, labels)
                 dl_dic[k] = DataLoader(corruption_ds, batch_size=32, shuffle=False)
         
         # dl_dicの各val (dataloader) をptで保存
         for k, dl in dl_dic.items():
-            save_path = os.path.join(data_dir, f"{k}_loader.pt")
+            save_path = os.path.join(f"/src/data/{ds}", f"{k}_loader.pt")
             torch.save(dl, save_path)
             print(f"saved {k} dataloader as {save_path}")

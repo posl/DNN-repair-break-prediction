@@ -137,7 +137,7 @@ if __name__ == "__main__":
             df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)  # 厳し目の決定方法
             logger.info(f"df_sm.shape: {df.shape}")
             # df.to_csv(os.path.join(rb_apricot_save_dir, f"{key}_fold{k+1}.csv"), index=False)
-            logger.info(f'saved to {os.path.join(rb_apricot_save_dir, f"{key}_fold{k+1}.csv")}')
+            # logger.info(f'saved to {os.path.join(rb_apricot_save_dir, f"{key}_fold{k+1}.csv")}')
 
             # exp. metricsと，repaied, brokenなどの列と結合する
             df_all = pd.concat([df_expmet, df], axis=1)
