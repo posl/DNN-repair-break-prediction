@@ -2,10 +2,12 @@ import os, sys, argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from collections import defaultdict
 import pandas as pd
+import numpy as np
 from lib.model import select_model, eval_model
 from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -66,60 +68,84 @@ def make_df_metrics(all_metrics_dict, num_fold):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["repair", "check"], default="repair")
-    # 実験のディレクトリと実験名を取得
-    exp_dir = os.path.dirname(sys.argv[1])
-    exp_name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
+    parser.add_argument("dataset", choices=["fmc", "c10c"], help="dataset name ('fmc' or 'c10c')")
+    args = parser.parse_args()
+    ds = args.dataset
     # log setting
-    # prepare_dataset_modelとは別のファイルにログを出すようにする
-    # HACK: exp_nameにtrainingが含まれてないといけない
-    log_file_name = exp_name.replace("training", "checking")
-    logger = set_exp_logging(exp_dir, exp_name, log_file_name)
-
-    # 設定用のjsonファイルをdictとしてロード
-    # HACK: 共通しているので関数にまとめて自動化したい
-    setting_dict = json2dict(sys.argv[1])
-    logger.info(f"Settings: {setting_dict}")
-
-    task_name = setting_dict["TASK_NAME"]
-    ds_type = dataset_type(task_name)
-    num_epochs = setting_dict["NUM_EPOCHS"]
-    batch_size = setting_dict["BATCH_SIZE"]
-    num_fold = setting_dict["NUM_FOLD"]
+    exp_dir = "/src/experiments/care/"
+    this_file_name = os.path.basename(__file__).replace(".py", "").replace("_", "-")
+    log_file_name = f"{ds}-{this_file_name}"
+    logger = set_exp_logging(exp_dir, log_file_name, log_file_name)
+    logger.info(f"target dataset: {ds}")
+    
+    # original dataset
+    if ds in ["fmc", "c10c"]:
+        ori_ds = ds.rstrip("c")
+        num_fold = 5
+        ds_type = dataset_type(ori_ds)
+    else:
+        raise ValueError(f"Invalid dataset name: {ds}")
 
     # モデルとデータの読み込み先のディレクトリ
-    data_dir = f"/src/data/{task_name}/{exp_name}"
-    model_dir = f"/src/models/{task_name}/{exp_name}"
+    data_dir = f"/src/data/{ds}/"
+    data_files = os.listdir(data_dir)
+    model_dir = f"/src/models/{ori_ds}/{ori_ds}-training-setting1"
 
-    # test dataloaderをロード (foldに関係ないので先にロードする)
-    test_data_path = os.path.join(data_dir, f"test_loader.pt")
-    test_loader = torch.load(test_data_path)
+    # データを読み込んでnpyの辞書を作る
+    npy_dic = {}
+    for file_name in data_files:
+        file_path = os.path.join(data_dir, file_name)
+        # file_nameからnpyを除いた部分だけ取得
+        key = file_name.replace(".npy", "")
+        # npyをロード
+        npy_dic[key] = torch.from_numpy(np.load(file_path)).clone()
+        logger.info(f"{key}, {npy_dic[key].shape}")
 
-    # train/repairの各foldの各メトリクスを保存するdefaultdict
-    train_metrics_dict = defaultdict(list)
-    repair_metrics_dict = defaultdict(list)
-    test_metrics_dict = defaultdict(list)
+    # 読み込んだnpyからdataloaderを作成
+    # データセットにより異なる処理をしないといけない
+    dl_dic = {}
+    if ds == "fmc":
+        # train, testに対するTensorDatasetを作成
+        train_x = npy_dic["fmnist-c-train"]
+        test_x = npy_dic["fmnist-c-test"]
+        train_y = npy_dic["fmnist-c-train-labels"]
+        test_y = npy_dic["fmnist-c-test-labels"]
+        train_ds = TensorDataset(train_x, train_y)
+        test_ds = TensorDataset(test_x, test_y)
+        # DataLoaderにして辞書に入れる
+        dl_dic["train"] = DataLoader(train_ds, batch_size=32, shuffle=False)
+        dl_dic["test"] = DataLoader(test_ds, batch_size=32, shuffle=False)
+    elif ds == "c10c":
+        labels = npy_dic["labels"]
+        print(labels.shape)
+        dl_dic = {}
+        # Corruptionの種類ごとにTensorDatasetを作成
+        for k, v in npy_dic.items():
+            if "labels" in k:
+                continue
+            # まずはtensor datasetをつくる
+            corruption_ds = TensorDataset(v, labels)
+            dl_dic[k] = DataLoader(corruption_ds, batch_size=32, shuffle=False)
+
+    # dl_dicに含まれる各dlに対して，各メトリクスを保存するdictを保存するためのdefaultdict
+    metrics_dic = defaultdict(defaultdict)
 
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
 
         # 学習済みモデルをロード
-        model = select_model(task_name=task_name)
+        model = select_model(task_name=ori_ds)
         model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
         model.load_state_dict(torch.load(model_path))
         model.eval()
 
-        # foldに対するdataloaderをロード
-        train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
-        train_loader = torch.load(train_data_path)
-        repair_loader = torch.load(repair_data_path)
+        # dl_dicにあるdlのそれぞれに対して, evaluation criteriaの計算
+        for key, dl in dl_dic.items():
+            metrics_dic[key] = eval_model(model, dl, ds_type)["metrics"]
+        logger.info(metrics_dic)
 
-        # evaluation criteriaの計算
-        train_metrics = eval_model(model, train_loader, ds_type)["metrics"]
-        repair_metrics = eval_model(model, repair_loader, ds_type)["metrics"]
-        test_metrics = eval_model(model, test_loader, ds_type)["metrics"]
+        exit()
 
         # メトリクスの記録
         train_metrics_dict = update_metrics_dict(train_metrics_dict, *train_metrics)
