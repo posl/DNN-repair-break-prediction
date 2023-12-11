@@ -1,5 +1,7 @@
 # ishimoto-NN-repair-break-JSS
 
+
+
 CAREだけのreplicationをgitlab上でやっていた．
 他の手法の実装も合わせて一つのレポジトリにしたいということでこちらで管理．
 
@@ -37,4 +39,15 @@ CAREだけのreplicationをgitlab上でやっていた．
 │   ├──arachne
 │   ├──care
 └── .gitignore
+```
+
+## 実行
+CPU実行でいい場合
+```shell
+docker compose up -d
+```
+
+GPU実行したい場合 (GPU用の設定を含んだdocker-composeファイルを読み込む必要がある)
+```shell
+docker compose -f docker-compose.gpu.yml up -d
 ```
