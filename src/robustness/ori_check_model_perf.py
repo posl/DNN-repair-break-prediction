@@ -67,6 +67,8 @@ def make_df_metrics(all_metrics_dict, num_fold):
 
 
 if __name__ == "__main__":
+    # gpuが使用可能かをdeviceにセット
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", choices=["fmc", "c10c"], help="dataset name ('fmc' or 'c10c')")
     args = parser.parse_args()
@@ -83,52 +85,33 @@ if __name__ == "__main__":
         ori_ds = ds.rstrip("c")
         num_fold = 5
         ds_type = dataset_type(ori_ds)
+        is_binary = False
     else:
         raise ValueError(f"Invalid dataset name: {ds}")
 
     # モデルとデータの読み込み先のディレクトリ
     data_dir = f"/src/data/{ds}/"
-    data_files = os.listdir(data_dir)
+    # dataloaderのファイル名だけ取り出す
+    dl_files = [f for f in os.listdir(data_dir) if f.endswith(".pt")]
     model_dir = f"/src/models/{ori_ds}/{ori_ds}-training-setting1"
 
-    # データを読み込んでnpyの辞書を作る
-    npy_dic = {}
-    for file_name in data_files:
-        file_path = os.path.join(data_dir, file_name)
-        # file_nameからnpyを除いた部分だけ取得
-        key = file_name.replace(".npy", "")
-        # npyをロード
-        npy_dic[key] = torch.from_numpy(np.load(file_path)).clone()
-        logger.info(f"{key}, {npy_dic[key].shape}")
+    # 正解不正解の配列を保存するためのdir
+    correctness_dir = os.path.join(f"./correctness_before", ds)
+    os.makedirs(correctness_dir, exist_ok=True)
 
-    # 読み込んだnpyからdataloaderを作成
-    # データセットにより異なる処理をしないといけない
+    # dataloaderを読み込む
     dl_dic = {}
-    if ds == "fmc":
-        # train, testに対するTensorDatasetを作成
-        train_x = npy_dic["fmnist-c-train"]
-        test_x = npy_dic["fmnist-c-test"]
-        train_y = npy_dic["fmnist-c-train-labels"]
-        test_y = npy_dic["fmnist-c-test-labels"]
-        train_ds = TensorDataset(train_x, train_y)
-        test_ds = TensorDataset(test_x, test_y)
-        # DataLoaderにして辞書に入れる
-        dl_dic["train"] = DataLoader(train_ds, batch_size=32, shuffle=False)
-        dl_dic["test"] = DataLoader(test_ds, batch_size=32, shuffle=False)
-    elif ds == "c10c":
-        labels = npy_dic["labels"]
-        print(labels.shape)
-        dl_dic = {}
-        # Corruptionの種類ごとにTensorDatasetを作成
-        for k, v in npy_dic.items():
-            if "labels" in k:
-                continue
-            # まずはtensor datasetをつくる
-            corruption_ds = TensorDataset(v, labels)
-            dl_dic[k] = DataLoader(corruption_ds, batch_size=32, shuffle=False)
+    for file_name in dl_files:
+        file_path = os.path.join(data_dir, file_name)
+        # file_nameから'_loader.pt'を除いた部分だけ取得
+        key = file_name.replace("_loader.pt", "")
+        dl_dic[key] = torch.load(file_path)
+        logger.info(f"loaded {key} dataloader.")
 
     # dl_dicに含まれる各dlに対して，各メトリクスを保存するdictを保存するためのdefaultdict
     metrics_dic = defaultdict(defaultdict)
+    for key, dl in dl_dic.items():
+        metrics_dic[key] = defaultdict(list)
 
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
@@ -142,33 +125,19 @@ if __name__ == "__main__":
 
         # dl_dicにあるdlのそれぞれに対して, evaluation criteriaの計算
         for key, dl in dl_dic.items():
-            metrics_dic[key] = eval_model(model, dl, ds_type)["metrics"]
-        logger.info(metrics_dic)
-
-        exit()
-
-        # メトリクスの記録
-        train_metrics_dict = update_metrics_dict(train_metrics_dict, *train_metrics)
-        repair_metrics_dict = update_metrics_dict(repair_metrics_dict, *repair_metrics)
-        test_metrics_dict = update_metrics_dict(test_metrics_dict, *test_metrics)
-
-        # メトリクスを表示
-        logger.info(
-            f"train acc: {train_metrics[0]:.4f}, train f1: {train_metrics[1]:.4f}, train pre: {train_metrics[2]:.4f}, train rec: {train_metrics[3]:.4f}, train mcc: {train_metrics[4]:.4f}"
-        )
-        logger.info(
-            f"repair acc: {repair_metrics[0]:.4f}, repair f1: {repair_metrics[1]:.4f}, repair pre: {repair_metrics[2]:.4f}, repair rec: {repair_metrics[3]:.4f}, repair mcc: {repair_metrics[4]:.4f}"
-        )
-        logger.info(
-            f"test acc: {test_metrics[0]:.4f}, test f1: {test_metrics[1]:.4f}, test pre: {test_metrics[2]:.4f}, test rec: {test_metrics[3]:.4f}, test mcc: {test_metrics[4]:.4f}"
-        )
+            logger.info(f"processing dl {key}...")
+            eval_res_dic = eval_model(model=model, dataloader=dl, dataset_type=ds_type, is_binary=is_binary, device=device)
+            metrics = eval_res_dic["metrics"]
+            metrics_dic[key] = update_metrics_dict(metrics_dic[key], *metrics)
+            # fold k のモデルの各keyのdlに対する正解/不正解のリストを保存
+            correctness_arr = eval_res_dic["correctness_arr"]
+            np.save(os.path.join(correctness_dir, f"{key}-fold-{k+1}.npy"), correctness_arr)
+        
 
     # メトリクスの辞書をcsvにして保存しておく
-    all_metrics_dict = {
-        "train": dict(train_metrics_dict),
-        "repair": dict(repair_metrics_dict),
-        "test": dict(test_metrics_dict),
-    }
+    all_metrics_dict = {}
+    for key, m in metrics_dic.items():
+        all_metrics_dict[key] = dict(m)
     csv_file_name = log_file_name.replace("setting", "result-setting")
     save_path = os.path.join(exp_dir, f"{csv_file_name}.csv")
     df = make_df_metrics(all_metrics_dict, num_fold)
