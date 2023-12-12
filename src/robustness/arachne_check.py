@@ -1,10 +1,12 @@
 import os, sys, argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+import pickle
+from collections.abc import Iterable
 from collections import defaultdict
 import pandas as pd
 import numpy as np
 from lib.model import select_model, eval_model
-from lib.util import json2dict, dataset_type
+from lib.util import json2dict, dataset_type, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -14,6 +16,43 @@ import seaborn as sns
 # plot setting
 sns.set()
 
+def set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device):
+    """
+    修正後の重みをモデルにセットする関数
+
+    Parameters
+    ------------------
+    model: keras model
+        修正前のモデル
+    deltas: dict
+        修正後の重みを保持する辞書
+    dic_keras_lid_to_torch_layers: dict
+        kerasモデルでの修正対象レイヤのインデックスとtorchモデルのレイヤの対応辞書
+    device: str
+
+    Returns
+    ------------------
+    model: keras model
+        deltasで示される重みをセットした後の, 修正後のモデル
+    """
+    for idx_to_tl, delta in deltas.items():
+        if isinstance(idx_to_tl, Iterable):
+            idx_to_tl, idx_to_w = idx_to_tl
+        else:
+            idx_to_tl = idx_to_tl
+        tl = dic_keras_lid_to_torch_layers[idx_to_tl]
+        lname = tl.__class__.__name__
+        if lname == "Conv2d" or lname == "Linear":
+            tl.weight.data = torch.from_numpy(delta).to(device)
+        elif lname == "LSTM":
+            for i, tp in enumerate(tl.parameters()):
+                if i == idx_to_w:
+                    tp.data = torch.from_numpy(delta).to(device)
+        else:
+            print("{} not supported".format(lname))
+            assert False
+    return model
+
 
 if __name__ == "__main__":
     # gpuが使用可能かをdeviceにセット
@@ -22,7 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("dataset", choices=["fmc", "c10c"], help="dataset name ('fmc' or 'c10c')")
     args = parser.parse_args()
     ds = args.dataset
-    method = "apricot"
+    method = "arachne"
     # log setting
     exp_dir = f"/src/experiments/{method}/"
     care_dir = "/src/experiments/care/"
@@ -64,6 +103,15 @@ if __name__ == "__main__":
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
 
+        # 学習済みモデルをロード
+        model = select_model(task_name=ori_ds)
+        model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+
+        # idx_to_tlとmodelのレイヤの対応
+        dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name=ori_ds, model=model)
+
         # dl_dicにあるdlのそれぞれに対して
         for key, dl in dl_dic.items():
             logger.info(f"processing dl {key}...")
@@ -78,18 +126,19 @@ if __name__ == "__main__":
             # 修正のnum_reps回の適用結果に関してそれぞれ見ていく
             for rep in range(5):
                 logger.info(f"processing rep {rep}...")
-                weight_save_dir = os.path.join(model_dir, "apricot-weight", f"rep{rep}")
-                weight_save_path = os.path.join(weight_save_dir, f"adjusted_weights_fold-{k}.pt")
-                # モデルの初期化
-                model = select_model(task_name=ori_ds)
-                # apricot適用後の重みをロード
-                model.load_state_dict(torch.load(weight_save_path))
-                model.to(device)
-                model.eval()
+                # arachneの修正済みweightをロード
+                weight_save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
+                weight_file_name = [f for f in os.listdir(weight_save_dir) if f.endswith(f"{k}.pkl")][0]
+                weight_save_path = os.path.join(weight_save_dir, weight_file_name)
+                with open(weight_save_path, "rb") as f:
+                    deltas = pickle.load(f)
+                # Arachneの結果えられたdeltasをモデルにセット
+                logger.info("Set the patches to the model...")
+                repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
 
                 # 予測を実行して結果を取得
                 ret_dict = eval_model(
-                    model=model,
+                    model=repaired_model,
                     dataloader=dl,
                     dataset_type=ds_type,
                     is_binary=is_binary,
