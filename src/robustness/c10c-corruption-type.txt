@@ -1,0 +1,1 @@
+{'spatter', 'speckle_noise', 'gaussian_blur', 'fog', 'motion_blur', 'snow', 'brightness', 'pixelate', 'frost', 'impulse_noise', 'zoom_blur', 'shot_noise', 'contrast', 'glass_blur', 'jpeg_compression', 'defocus_blur', 'elastic_transform', 'gaussian_noise', 'saturate'}

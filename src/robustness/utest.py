@@ -1,5 +1,6 @@
 import os, sys, csv
-from itertools import product
+from ast import literal_eval
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,23 +10,20 @@ from scipy import stats
 
 sns.set(style="whitegrid", font_scale=1.5)
 
+NUM_FOLDS = 5
 
 # 必要なdfを読んできて返す
-def get_df(method, dataset, rb):
+def get_df(method, ds, rb, key):
     obj_col = "repaired" if rb == "repair" else "broken"
     # 実験のdir名
-    exp_dir = f"/src/experiments/{method}"
+    exp_dir = f"/src/src/robustness/rb_datasets/{ds}/{method}"
     # repair/break datasetのファイル名
-    if method == "care":
-        rb_ds_filename = f"{dataset}-fairness-setting1-{rb}.csv"
-    elif method == "apricot" or method == "arachne":
-        rb_ds_filename = f"{dataset}-training-setting1-{rb}.csv"
-    target_path = os.path.join(
-        exp_dir, "repair_break_dataset", "raw_data", rb_ds_filename
-    )
-    # repair/break datasetのcsvをロード
-    df = pd.read_csv(target_path)
-    return df
+    df_list = []
+    for k in range(NUM_FOLDS):
+        rb_ds_filename = f"{key}_fold{k+1}-{rb}.csv"
+        # repair/break datasetのcsvをロードしてリストに追加
+        df_list.append(pd.read_csv(os.path.join(exp_dir, rb_ds_filename)))
+    return pd.concat(df_list, ignore_index=True)
 
 def judge_test_res(p_value, d_cliff):
     sign = ""
@@ -40,7 +38,7 @@ def judge_test_res(p_value, d_cliff):
     sig_001 = 0.01
     # 効果量の閾値
     eff_large = 0.474
-    eff_medium = 0.33
+    eff_medium = 0.33   
     eff_small = 0.147
     # 検定結果を判断して出力を整形
     # 有意水準の判断
@@ -65,13 +63,12 @@ def judge_test_res(p_value, d_cliff):
 if __name__ == "__main__":
     rb = sys.argv[1]
     obj_col = "repaired" if rb == "repair" else "broken"
-
     # 定数たち
     methods = ["care", "apricot", "arachne"]
-    datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
-
+    datasets = ["fmc", "c10c"]
     # 検定するmetricsの順番のリスト
     exp_cols = ["entropy", "pcs", "lps", "loss"]
+    alternative = "two-sided"
 
     # 結果を入れるarr
     res_arr = []
@@ -80,10 +77,16 @@ if __name__ == "__main__":
     mean_std_arr = []
     eff_size_arr = []
 
-    alternative = "two-sided"
-
 
     for i, dataset in enumerate(datasets):
+        if dataset == "c10c":
+            # c10c-corruption-type.txtをロードする
+            c10c_corruption_type_dir = "./c10c-corruption-type.txt"
+            with open(c10c_corruption_type_dir, "r") as f:
+                c10c_corruption_type = f.read().rstrip("\n")
+            file_names_set = literal_eval(c10c_corruption_type)
+        elif dataset == "fmc":
+            file_names_set = {"train", "test"}
         mean_arr_ds = []
         mean_std_arr_ds = []
         res_arr_ds = []
@@ -91,13 +94,16 @@ if __name__ == "__main__":
         eff_size_arr_ds = []
         for method in methods:
             print(f"{method}, {dataset}\n==========================")
-            df = get_df(method, dataset, rb)
+            # keyごとにdfを縦に結合
+            df_list = []
+            for key in file_names_set:
+                df_list.append(get_df(method, dataset, rb, key))
+            df = pd.concat(df_list, ignore_index=True)
             print(df.shape)
-            print(df[obj_col].value_counts())
             # repaired/non-repaires (broken/non-broken) に分ける
             df_t = df[df[obj_col] == True]
             df_f = df[df[obj_col] == False]
-            
+
             # 検定と効果量の前に平均と分散も計算しておきたい
             print("conducting mean and std calculation...")
             mean_t, std_t = df_t.describe().loc["mean"], df_t.describe().loc["std"]
@@ -127,6 +133,7 @@ if __name__ == "__main__":
                     color = "white"
                 res_arr_ds_tex.append(f"\\textcolor{{{color}}}{{{eff + sig}}}")
                 eff_size_arr_ds.append(d_cliff)
+
         
         mean_arr.append(mean_arr_ds)
         mean_std_arr.append(mean_std_arr_ds)
@@ -134,11 +141,11 @@ if __name__ == "__main__":
         res_arr_tex.append(res_arr_ds_tex)
         eff_size_arr.append(eff_size_arr_ds)
     # CSVファイルへの書き込み
-    res_path = f"mannwhitneyu_{rb}_{alternative}.csv"
-    res_path_tex = f"mannwhitneyu_{rb}_{alternative}_tex.csv"
-    mean_std_path = f"mean_std_{rb}.csv"
-    mean_path = f"mean_{rb}.csv"
-    eff_size_arr_path = f"eff_size_{rb}.csv"
+    res_path = f"mannwhitneyu_{rb}_{alternative}_robustness.csv"
+    res_path_tex = f"mannwhitneyu_{rb}_{alternative}_tex_robustness.csv"
+    mean_std_path = f"mean_std_{rb}_robustness.csv"
+    mean_path = f"mean_{rb}_robustness.csv"
+    eff_size_arr_path = f"eff_size_{rb}_robustness.csv"
     for file_path, arr in zip([res_path, res_path_tex, mean_std_path, mean_path, eff_size_arr_path], [res_arr, res_arr_tex, mean_std_arr, mean_arr, eff_size_arr]):
         with open(file_path, 'w', newline='', encoding='utf-8') as csv_file:
             csv_writer = csv.writer(csv_file)
