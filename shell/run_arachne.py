@@ -4,7 +4,7 @@ if __name__ == "__main__":
     # dataset名はコマンドライン引数から取得
     dataset = sys.argv[1]
     # ソースのディレクトリへ移動
-    os.chdir("../src")
+    # os.chdir("../src")
     # reps数は全データセット共通
     num_reps = 5
     # fold数はデータセットごとに異なる
@@ -17,9 +17,6 @@ if __name__ == "__main__":
     # foldとrepを指定して実行
     for fold in range(num_folds):
         for rep in range(num_reps):
-            # fold0, rep0, 1はスキップ
-            # if fold == 0 and (rep == 0 or rep == 1):
-            #     continue
             print(f"run dataset={dataset}, fold={fold}, rep={rep}...")
             result = subprocess.run(["python", "arachne_repair.py", path, str(fold), str(rep)])
             # サブプロセスのエラーチェック
