@@ -67,3 +67,4 @@ bash shell/run_arachne_repair.sh
 ```
 
 ## 4. Build repairs and breaks prediction models
+Based on the history of repair in the previous step, build repairs and breaks prediction models.
