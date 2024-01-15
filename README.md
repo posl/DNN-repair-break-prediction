@@ -17,8 +17,14 @@ pwd
 ## Step 0. Download datasets
 Download the directory from google drive of the following link and put it under `DNN-repair-break-prediction/`: https://drive.google.com/drive/folders/1Z1W3eK2UYpP_bz2PLO-MhaT6TGvb2hKr?usp=drive_link
 
-You can see the directory named `data`.
+You can see a directory named `data`.
 This directory has a subdirectory for each dataset used in the experiment and contains raw and preprocessed data.
+
+This link also contains a directory named `repairs-breaks-dataset`.
+This directory has a subdirectory for each repair method.
+These subdirectories contain a csv of the repair history for each repair method.
+The `raw_data` contains the values of the explanatory variables as they are, and the `preprocessed_data` contains the values after the prescribed preprocessing of the explanatory variables.
+These datasets can be obtained at the end of Step 3 described below, but is cut out on the drive for easy review.
 
 
 ## Step 1. Build docker container
