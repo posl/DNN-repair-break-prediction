@@ -1,5 +1,7 @@
 # DNN-repair-break-prediction
-This is the replication package of our work of repairs and breaks prediction for DNNs.
+This is the replication package of our study of repairs and breaks prediction for DNNs.
+
+This repository contains all the source code and datasets used in our study.
 
 We have tested to work with with AWS EC2 p2.xlarge instance (Ubuntu 18.04.6 LTS) and M1 Macbook Pro BigSur version 11.2.3.
 
