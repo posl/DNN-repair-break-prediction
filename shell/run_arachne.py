@@ -8,7 +8,7 @@ if __name__ == "__main__":
     # reps数は全データセット共通
     num_reps = 5
     # fold数はデータセットごとに異なる
-    if dataset in ["census", "bank"]:
+    if dataset in ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]:
         num_folds = 10
     else:
         num_folds = 5
@@ -17,9 +17,10 @@ if __name__ == "__main__":
     # foldとrepを指定して実行
     for fold in range(num_folds):
         for rep in range(num_reps):
-            print(f"run dataset={dataset}, fold={fold}, rep={rep}...")
-            result = subprocess.run(["python", "arachne_repair.py", path, str(fold), str(rep)])
-            # サブプロセスのエラーチェック
-            if result.returncode != 0:
-                # エラー終了コードを指定してメインプロセスを終了
-                exit(1)
+            for mode in ["repair", "predict"]:
+                print(f"run dataset={dataset}, fold={fold}, rep={rep}, mode={mode}...")
+                result = subprocess.run(["python", "torch_arachne_repair.py", path, str(fold), str(rep), "--mode", str(mode)])
+                # サブプロセスのエラーチェック
+                if result.returncode != 0:
+                    # エラー終了コードを指定してメインプロセスを終了
+                    exit(1)
