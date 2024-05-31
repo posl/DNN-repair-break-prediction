@@ -924,6 +924,82 @@ class RTMRModel(TextModel):
         )
         # logger.info(self.count_neurons_params())
 
+class ACASXuModel(nn.Module):
+    """
+    ACAS XuのFNNのためのFNNモデル.
+    重みとバイアスはファイルからロードする形でoriginal trained modelを形成する.
+    レイヤの数とニューロンの数は固定.
+    """
+
+    def __init__(self, nnid):
+        super().__init__()
+        # 入出力のサイズやニューロン数は固定
+        self.input_dim, self.output_dim = 5, 5
+        self.hidden_size = 50
+        self.layers = nn.Sequential(
+            nn.Sequential(torch.nn.Linear(self.input_dim, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU()),
+            nn.Sequential(torch.nn.Linear(self.hidden_size, self.output_dim)),
+        )
+        # 重みとバイアスのファイルパスを指定してロードしてセット
+        self.nn_dir = f"/src/models/acasxu/original_weight/nnet_{nnid[0]}_{nnid[1]}"
+        self._load_weights_and_biases()
+        logger.info(self.count_neurons_params())
+        # これらは入力の正規化に必要
+        self.means = [19791.091, 0, 0, 650, 600]
+        self.ranges = [60261, 6.283186, 6.283186, 1100, 1200]
+    
+    def _load_weights_and_biases(self):
+        # 重みとバイアスのファイルパス
+        weight_files = [f"{self.nn_dir}/weights/w{i+1}.txt" for i in range(len(self.layers))]
+        bias_files = [f"{self.nn_dir}/bias/b{i+1}.txt" for i in range(len(self.layers))]
+
+        # 各層に重みとバイアスを設定
+        for i, layer in enumerate(self.layers):
+            if isinstance(layer[0], nn.Linear):
+                # 重みの読み込み
+                with open(weight_files[i], 'r') as f:
+                    weights = np.array(eval(f.read()), dtype=np.float32)
+                with open(bias_files[i], 'r') as f:
+                    biases = np.array(eval(f.read()), dtype=np.float32)
+                # 重みとバイアスの設定
+                layer[0].weight.data = torch.tensor(weights, dtype=torch.float32)
+                layer[0].bias.data = torch.tensor(biases, dtype=torch.float32)
+    
+    def _normalize_input(self, x):
+        """入力を正規化"""
+        x = (x - torch.tensor(self.means)) / torch.tensor(self.ranges)
+        return x
+
+    def forward(self, x):
+        """順伝搬"""
+        out = self._normalize_input(x)
+        for layer in self.layers:
+            out = layer(out)
+        return out
+
+    def count_neurons_params(self):
+        """ニューロン数と学習できるパラメータ数を数える"""
+        num_neurons, num_params = self.input_dim, 0
+        for name, param in self.named_parameters():
+            if not "bias" in name:
+                num_neurons += param.shape[0]
+            num_params += np.prod(param.shape)
+        return {"num_neurons": num_neurons, "num_params": num_params}
+    
+    def predict(self, x, device="cpu"):
+        """バッチの予測を実行"""
+        x = x.to(device)
+        out = self.forward(x)
+        prob = nn.Softmax(dim=1)(out)
+        pred = torch.argmin(prob, dim=1) # NOTE: ACAS Xuではスコア最小の物を選択して出力する
+        return {"prob": prob, "pred": pred}
+
+
 
 def train_model(model, dataloader, num_epochs, dataset_type):
     """学習用の関数
