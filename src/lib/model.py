@@ -70,8 +70,6 @@ class TabularModel(nn.Module):
         Returns:
             ndarray: 各データサンプルに対する指定したレイヤにおける各ニューロンの値が入ったndarray
         """
-        # 返したいリスト
-        hvals = []
         o = data
         # 各レイヤに対して順伝搬
         for lid, layer in enumerate(self.layers):
@@ -954,6 +952,9 @@ class ACASXuModel(nn.Module):
         self.ranges = [60261, 6.283186, 6.283186, 1100, 1200]
     
     def _load_weights_and_biases(self):
+        """
+        self.nnid (tuple) で指定されるモデルファイルから各層の重みとバイアスをロードしてモデルにセットする.
+        """
         # 重みとバイアスのファイルパス
         weight_files = [f"{self.nn_dir}/weights/w{i+1}.txt" for i in range(len(self.layers))]
         bias_files = [f"{self.nn_dir}/bias/b{i+1}.txt" for i in range(len(self.layers))]
@@ -972,12 +973,17 @@ class ACASXuModel(nn.Module):
     
     def _normalize_input(self, x):
         """入力を正規化"""
-        x = (x - torch.tensor(self.means)) / torch.tensor(self.ranges)
+        x = (x - torch.tensor(self.means, device=x.device)) / torch.tensor(self.ranges, device=x.device)
         return x
 
-    def forward(self, x):
-        """順伝搬"""
-        out = self._normalize_input(x)
+    def forward(self, x, is_normalized=True):
+        """順伝搬
+        入力がすでに正規化されている場合は is_normalized=True にする.
+        """
+        if not is_normalized:
+            out = self._normalize_input(x)
+        else:
+            out = x
         for layer in self.layers:
             out = layer(out)
         return out
@@ -991,13 +997,76 @@ class ACASXuModel(nn.Module):
             num_params += np.prod(param.shape)
         return {"num_neurons": num_neurons, "num_params": num_params}
     
-    def predict(self, x, device="cpu"):
-        """バッチの予測を実行"""
+    def predict(self, x, device="cpu", is_normalized=True):
+        """バッチの予測を実行
+        入力がすでに正規化されている場合は is_normalized=True にする.
+        """
         x = x.to(device)
-        out = self.forward(x)
+        out = self.forward(x, is_normalized=is_normalized)
         prob = nn.Softmax(dim=1)(out)
-        pred = torch.argmin(prob, dim=1) # NOTE: ACAS Xuではスコア最小の物を選択して出力する
-        return {"prob": prob, "pred": pred}
+        pred_min = torch.argmin(prob, dim=1) # NOTE: ACAS Xuではスコア最小の物を選択して出力する
+        pred_max = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred_min, "pred_min": pred_min, "pred_max": pred_max}
+
+    def get_layer_distribution(self, data, target_lid, device="cpu", is_normalized=True):
+        """データxを入力した際の指定したレイヤのニューロンの値（活性化関数通す前, 全結合の後）の分布を出力する.
+        出力されるndarrayの形状は, (データ数, target_lidのニューロン数)となる.
+
+
+        Args:
+            data (torch.Tensor): 入力データ.
+            target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed). e.g., 最初の全結合層の出力ニューロンに対しては0. 2番目に対しては1.
+
+        Returns:
+            ndarray: 各データサンプルに対する指定したレイヤにおける各ニューロンの値が入ったndarray
+        """
+        o = data.to(device)
+        if not is_normalized:
+            o = self._normalize_input(o)
+        # 各レイヤに対して順伝搬
+        for lid, layer in enumerate(self.layers):
+            fc_out = layer[0](o)  # linear
+            o = layer[1](fc_out)  # relu
+            # 指定したレイヤの各ニューロンの値を取り出して次のデータへ
+            if lid == target_lid:
+                return fc_out.detach().cpu().numpy()
+    
+    def predict_with_intervention(
+        self, x, hval, target_lid=None, target_nid=None, device="cpu", is_normalized=True
+    ):
+        """指定したニューロンの値に介入した場合 (= あるニューロンの値を固定する) の予測結果を返す.
+
+        Args:
+            x (torch.Tensor): データのtensor.
+            hval (float): 介入後の指定したニューロンの値.
+            target_lid (int): 対象となるニューロンがあるレイヤのインデックス (0-indexed). e.g., 最初の全結合層の出力ニューロンに対しては0. 2番目に対しては1.
+            target_nid (int): 対象となるニューロンのインデックス (0-indexed).
+            device (str): 使用するデバイス. CPUかGPUか.
+
+        Returns:
+            dict: 予測確率と予測ラベルの辞書.
+        """
+        o = x.to(device)
+        if not is_normalized:
+            o = self._normalize_input(o)
+        # layerごとの順伝搬
+        for lid, layer in enumerate(self.layers):
+            fc_out = layer[0](o)  # linear
+
+            # 介入したニューロン値に対しては全結合層の後のニューロンを介入後の値で置き換える
+            if lid == target_lid:
+                fc_out[0][target_nid] = torch.tensor(hval, device=device)
+
+            # 最終層かどうかで場合分け
+            if len(layer) == 2:
+                o = layer[1](fc_out)  # relu
+            elif len(layer) == 1:
+                o = fc_out  # 最終層
+
+        prob = nn.Softmax(dim=1)(o)
+        pred_min = torch.argmin(prob, dim=1) # NOTE: ACAS Xuではスコア最小の物を選択して出力する
+        pred_max = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred_min, "pred_min": pred_min, "pred_max": pred_max}
 
 
 
@@ -1201,7 +1270,7 @@ def eval_model(
     return ret_dict
 
 
-def select_model(task_name):
+def select_model(task_name, nnid=None):
     """taskごとに対応するモデルのインスタンス（初期状態）を返す.
 
     Args:
@@ -1229,6 +1298,8 @@ def select_model(task_name):
         return IMDBModel()
     elif task_name == "rtmr":
         return RTMRModel()
+    elif task_name == "acasxu":
+        return ACASXuModel(nnid)
     else:
         raise NotImplementedError
 
