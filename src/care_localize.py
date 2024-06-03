@@ -1,11 +1,12 @@
-import os, sys, time
+import os, sys, time, re
 from collections import defaultdict
 
 import numpy as np
 from lib.model import select_model
-from lib.fairness import calc_average_causal_effect, calc_acc_average_causal_effect
+from lib.fairness import calc_acc_average_causal_effect, calc_safety_average_causal_effect
 from lib.util import json2dict, dataset_type
 from lib.log import set_exp_logging
+from lib.safety import check_safety_prop
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -15,7 +16,7 @@ sns.set_style("white")
 
 # tabluerデータセットにおいてfairness repairをするかどうか
 TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化する
-
+NUM_FOLD_ACAS = 5
 
 def plot_fl_score(fl_score, exp_name, k):
     """各レイヤ, ニューロンにおけるFLスコアをプロットして保存する.
@@ -68,14 +69,33 @@ if __name__ == "__main__":
     logger.info(f"Settings: {setting_dict}")
 
     train_setting_path = setting_dict["TRAIN_SETTING_PATH"]
-    # 訓練時の設定名を取得
-    train_setting_name = os.path.splitext(train_setting_path)[0]
-
-    # 訓練時の設定も読み込む
-    train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
-    logger.info(f"TRAIN Settings: {train_setting_dict}")
-    num_fold = train_setting_dict["NUM_FOLD"]
-    task_name = train_setting_dict["TASK_NAME"]
+    if not exp_name.startswith("acas"):
+        # 訓練時の設定名を取得
+        train_setting_name = os.path.splitext(train_setting_path)[0]
+        # 訓練時の設定も読み込む
+        train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
+        logger.info(f"TRAIN Settings: {train_setting_dict}")
+        num_fold = train_setting_dict["NUM_FOLD"]
+        task_name = train_setting_dict["TASK_NAME"]
+        # モデルとデータの読み込み先のディレクトリ
+        data_dir = f"/src/data/{task_name}/{train_setting_name}"
+        model_dir = f"/src/models/{task_name}/{train_setting_name}"
+    else:
+        num_fold = NUM_FOLD_ACAS
+        task_name = "acasxu"
+        # n{i}_{j}_prop{p}の部分を正規表現で取り出し
+        pattern = r"acasxu_n(\d+)_(\d+)_prop(\d+)-fairness-setting\d+"
+        match = re.search(pattern, exp_name)
+        if match:
+            nnid = int(match.group(1)), int(match.group(2))
+            pid = int(match.group(3))
+            acas_setting = f"n{nnid[0]}_{nnid[1]}_prop{pid}"
+            logger.info(f"acas_setting: {acas_setting}")
+        data_dir = f"/src/data/{task_name}/{acas_setting}"
+        model_dir = f"/src/model/{task_name}/{acas_setting}"
+        # data_dir, model_dirがなかったら作る
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(model_dir, exist_ok=True)
     ds_type = dataset_type(task_name)
 
     # fairnessの計算のための情報をパース
@@ -104,18 +124,18 @@ if __name__ == "__main__":
             target_nids
         ), f"Error: len(target_lid)({len(target_lids)}) != len(target_nid)({len(target_nids)})"
 
-    # モデルとデータの読み込み先のディレクトリ
-    data_dir = f"/src/data/{task_name}/{train_setting_name}"
-    model_dir = f"/src/models/{task_name}/{train_setting_name}"
-
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
 
         # 学習済みモデルをロード
-        model = select_model(task_name=task_name)
-        model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
-        model.load_state_dict(torch.load(model_path))
+        if not exp_name.startswith("acas"):
+            model = select_model(task_name=task_name)
+            model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
+            model.load_state_dict(torch.load(model_path))
+        else:
+            # NOTE: acasの場合はkによらずモデルは変化しないがmodel定義の場所がばらけるのが嫌なのでここでやる
+            model = select_model(task_name=task_name, nnid=nnid)
         model.to(device)
         model.eval()
 
@@ -129,33 +149,80 @@ if __name__ == "__main__":
         total_corr = 0  # acc計算用
         # repair_loaderからバッチを読み込み
         for batch_idx, batch in enumerate(repair_loader):
-            if ds_type == "text":
-                data, labels = batch[0].to(device), batch[1].to(device)
-                data_lens = batch[2]
-                org_preds = model.predict(x=data, x_lens=data_lens, device=device)["pred"]
-            else:
-                data, labels = batch[0].to(device), batch[1].to(device)
-                org_preds = model.predict(x=data, device=device)["pred"]
-            num_corr = sum(org_preds == labels)
-            total_corr += num_corr.cpu()
+            if ds_type == "safety":
+                data = batch[0].to(device=device)
+                outputs = model.predict(x=data, device=device)
+                is_unsafe = check_safety_prop(outputs, pid)
+                num_corr = len(is_unsafe) - sum(is_unsafe) # safety propを満たした数
+                total_corr += num_corr.cpu()
+            else: # correctnessの観点
+                if ds_type == "text":
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    data_lens = batch[2]
+                    org_preds = model.predict(x=data, x_lens=data_lens, device=device)["pred"]
+                else:
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    org_preds = model.predict(x=data, device=device)["pred"]
+                num_corr = sum(org_preds == labels)
+                total_corr += num_corr.cpu()
         acc_org = total_corr / len(repair_ds)
-        logger.info(f"acc_org={acc_org}")
+        logger.info(f"acc_org = {acc_org} ({total_corr} / {len(repair_ds)})")
 
         # FL開始時刻
         s = time.clock()
         fl_score = defaultdict(float)
         # 計算したい各レイヤ/ニューロンに対してFLのスコア（Average Causal Effects）を算出
+        # ここからsafetyデータ用====================================================
+        if ds_type == "safety":
+            assert (target_lids is None) and (target_nids is None)
+            target_lids = range(len(model.layers) - 1) # 最終層ニューロンは出力ニューロンなので含めない
+            target_nids = range(model.hidden_size)
+            # target_layer, neuronごとにFLスコアを計算
+            for target_lid, target_nids_for_layer in zip(target_lids, [target_nids for _ in range(len(target_lids))]):
+                layer_dist = []
+                # バッチごとにあるレイヤの出力を取得して最後に全バッチ結合する
+                for batch_idx, batch in enumerate(repair_loader):
+                    data = batch[0].to(device=device)
+                    layer_dist_batch = model.get_layer_distribution(data, target_lid=target_lid, device=device)
+                    layer_dist.append(layer_dist_batch)
+                layer_dist = np.concatenate(layer_dist, axis=0)
+                logger.info(f"layer_dist.shape={layer_dist.shape}")
+
+                # あるターゲットレイヤの各ターゲットニューロンに対しACEを計算
+                for target_nid in target_nids_for_layer:
+                    logger.info(f"target layer={target_lid}, target neuron={target_nid}")
+                    # ターゲットニューロンの取りうる値の範囲を求めてnum_steps個に等分する
+                    hdist = layer_dist[:, target_nid]
+                    hmin, hmax = min(hdist), max(hdist)
+                    hvals = np.linspace(hmin, hmax, num_steps)
+                    logger.info(f"hmin={hmin}, hmax={hmax},\nhvals={hvals}")
+                    repair_fairness_list = calc_safety_average_causal_effect(
+                        model,
+                        repair_loader,
+                        target_lid=target_lid,
+                        target_nid=target_nid,
+                        hvals=hvals,
+                        acc_org=acc_org,
+                        device=device,
+                        ds_type=ds_type,
+                        pid=pid
+                    )
+                    # repair_fairness_listの各要素をcpuに移動
+                    repair_fairness_list = [v.cpu() for v in repair_fairness_list]
+                    fl_score[f"({target_lid},{target_nid})"] = np.mean(repair_fairness_list)
+        # ここまでsafetyデータ用====================================================
+
         # ここからimageデータ用====================================================
-        if ds_type == "image":
+        elif ds_type == "image":
             assert (target_lids is None) and (target_nids is None)
             layer_dist = []
             # バッチごとにあるレイヤの出力を取得して最後に全バッチ結合する
             for batch_idx, batch in enumerate(repair_loader):
-                if ds_type == "text":
-                    data, labels = batch[0].to(device), batch[1].to(device)
-                    data_lens = batch[2]
-                else:
-                    data, labels = batch[0].to(device), batch[1].to(device)
+                # if ds_type == "text":
+                #     data, labels = batch[0].to(device), batch[1].to(device)
+                #     data_lens = batch[2]
+                # else:
+                data, labels = batch[0].to(device), batch[1].to(device)
                 layer_dist_batch = model.get_layer_distribution(data, device=device)
                 layer_dist.append(layer_dist_batch)
             layer_dist = np.concatenate(layer_dist, axis=0)

@@ -49,6 +49,8 @@ def dataset_type(dataset):
         return "image"
     elif dataset in ["imdb", "rtmr", "toxic"]:
         return "text"
+    elif dataset in ["acasxu"]:
+        return "safety"
     else:
         raise ValueError(f"dataset {dataset} is not supported.")
 

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 cd ../src
-# $1 = exp id, $2 = sensitve feature name
 
 # tabular datasets
 echo CARE tabular datasets...
@@ -35,3 +34,9 @@ python care_check.py /src/experiments/care/rtmr-fairness-setting1.json
 python care_localize.py /src/experiments/care/imdb-fairness-setting1.json
 python care_repair_fairness.py /src/experiments/care/imdb-fairness-setting1.json
 python care_check.py /src/experiments/care/imdb-fairness-setting1.json
+
+# safety datasets
+echo CARE safety datasets...
+python care_localize.py /src/experiments/care/acasxu_n2_9_prop8-fairness-setting1.json
+python care_localize.py /src/experiments/care/acasxu_n3_5_prop2-fairness-setting1.json
+python care_localize.py /src/experiments/care/acasxu_n1_9_prop7-fairness-setting1.json

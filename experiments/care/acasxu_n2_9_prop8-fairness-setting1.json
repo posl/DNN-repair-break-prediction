@@ -1,0 +1,8 @@
+{
+    "TRAIN_SETTING_PATH": "", 
+    "NUM_STEPS": 32,
+    "TARGET_LAYER": "",
+    "TARGET_NEURON": "",
+    "REPAIR_RATIO": 0.2,
+    "PSO_SETTING_PATH": "pso-setting1.json"
+}
