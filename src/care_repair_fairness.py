@@ -175,7 +175,7 @@ if __name__ == "__main__":
             acas_setting = f"n{nnid[0]}_{nnid[1]}_prop{pid}"
             logger.info(f"acas_setting: {acas_setting}")
         data_dir = f"/src/data/{task_name}/{acas_setting}"
-        model_dir = f"/src/model/{task_name}/{acas_setting}"
+        model_dir = f"/src/models/{task_name}/{acas_setting}"
     ds_type = dataset_type(task_name)
     collate_fn = pad_collate if ds_type == "text" else None
 

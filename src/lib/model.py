@@ -12,6 +12,7 @@ from sklearn.metrics import (
     recall_score,
     matthews_corrcoef,
 )
+from lib.safety import check_safety_prop
 
 # for logging
 from logging import getLogger
@@ -1258,7 +1259,6 @@ def sm_correctness(
                 out = model.predict_with_repair(
                     data, x_lens, hvals, neuron_location=neuron_location, device=device
                 )
-
             pred = out["pred"].cpu()
             y_true.extend(labels.cpu())
             y_pred.extend(pred)
@@ -1267,6 +1267,42 @@ def sm_correctness(
     y_pred = np.array(y_pred)
     correctness_arr = np.where(y_true == y_pred, 1, 0)
     return y_true, y_pred, correctness_arr
+
+def sm_safety(
+    model,
+    dataloader,
+    is_repair=False,
+    hvals=None,
+    neuron_location=None,
+    device="cpu",
+    pid=None
+):
+    # ネットワークをデバイスへ
+    model.to(device)
+    # モデルを推論モードに
+    model.eval()
+    # ネットワークがある程度固定であれば、高速化させる
+    torch.backends.cudnn.benchmark = True
+    # 各サンプルがsafetyを満たしたか (みたしたなら1, そうでなければ0) のリスト
+    is_safe_arr = []
+    for data, _ in dataloader:
+        data = data.to(device)
+        if not is_repair:
+            # 修正前の重みで予測.
+            out = model.predict(data, device=device)
+        else:
+            # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
+            assert (
+                hvals is not None and neuron_location is not None
+            ), "despite is_repair=True, hvals and neuron_location are None!!!"
+            # 修正後の重みで予測.
+            out = model.predict_with_repair(
+                data, hvals, neuron_location=neuron_location, device=device
+            )
+        is_safe_tmp = check_safety_prop(out, pid)
+        is_safe_tmp = [int(not o) for o in is_safe_tmp.cpu().tolist()]
+        is_safe_arr.extend(is_safe_tmp)
+    return np.array(is_safe_arr)
 
 
 def eval_model(
@@ -1278,6 +1314,8 @@ def eval_model(
     neuron_location=None,
     is_binary=True,
     device="cpu",
+    perspective="correctness",
+    pid=ModuleNotFoundError
 ):
     """モデルの評価用の関数.
 
@@ -1293,24 +1331,38 @@ def eval_model(
     Returns:
         *float: dataloaderでモデルを評価した各種メトリクス.
     """
-    # correctnessを評価
-    y_true, y_pred, correctness_arr = sm_correctness(
-        model, dataloader, dataset_type, is_repair, hvals, neuron_location, device
-    )
-    average = "binary" if is_binary else "macro"
-    # 各評価指標を算出
-    acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, average=average)
-    pre = precision_score(y_true, y_pred, average=average)
-    rec = recall_score(y_true, y_pred, average=average)
-    mcc = matthews_corrcoef(y_true, y_pred)
-    # dictにして返す
-    ret_dict = {}
-    ret_dict["metrics"] = acc, f1, pre, rec, mcc
-    ret_dict["y_true"] = y_true
-    ret_dict["y_pred"] = y_pred
-    ret_dict["correctness_arr"] = correctness_arr
-    return ret_dict
+    if perspective == "correctness":
+        # correctnessを評価
+        y_true, y_pred, correctness_arr = sm_correctness(
+            model, dataloader, dataset_type, is_repair, hvals, neuron_location, device
+        )
+        average = "binary" if is_binary else "macro"
+        # 各評価指標を算出
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred, average=average)
+        pre = precision_score(y_true, y_pred, average=average)
+        rec = recall_score(y_true, y_pred, average=average)
+        mcc = matthews_corrcoef(y_true, y_pred)
+        # dictにして返す
+        ret_dict = {}
+        ret_dict["metrics"] = acc, f1, pre, rec, mcc
+        ret_dict["y_true"] = y_true
+        ret_dict["y_pred"] = y_pred
+        ret_dict["correctness_arr"] = correctness_arr
+        return ret_dict
+    elif perspective == "safety":
+        # safetyを評価
+        is_safe_arr = sm_safety(
+            model, dataloader, is_repair, hvals, neuron_location, device, pid
+        )
+        # safetyの評価指標を算出
+        safe_rate = np.mean(is_safe_arr)
+        # dictにして返す
+        ret_dict = {}
+        ret_dict["is_safe_mean"] = safe_rate
+        ret_dict["correctness_arr"] = is_safe_arr
+        return ret_dict
+
 
 
 def select_model(task_name, nnid=None):

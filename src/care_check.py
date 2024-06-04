@@ -20,7 +20,8 @@ import seaborn as sns
 sns.set_style("white")
 
 # tabluerデータセットにおいてfairness repairをするかどうか
-TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化するs
+TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化する
+NUM_FOLD_ACAS = 5
 
 # 実験の繰り返し数
 num_reps = 5
@@ -120,16 +121,36 @@ if __name__ == "__main__":
         logger.info(f"Inherit from {inherit_exp_name}")
 
     train_setting_path = setting_dict["TRAIN_SETTING_PATH"]
-    # 訓練時の設定名を取得
-    train_setting_name = os.path.splitext(train_setting_path)[0]
-
-    # 訓練時の設定も読み込む
-    train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
-    logger.info(f"TRAIN Settings: {train_setting_dict}")
-    num_fold = train_setting_dict["NUM_FOLD"]
-    task_name = train_setting_dict["TASK_NAME"]
+    if not exp_name.startswith("acas"):
+        # 訓練時の設定名を取得
+        train_setting_name = os.path.splitext(train_setting_path)[0]
+        # 訓練時の設定も読み込む
+        train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
+        logger.info(f"TRAIN Settings: {train_setting_dict}")
+        num_fold = train_setting_dict["NUM_FOLD"]
+        task_name = train_setting_dict["TASK_NAME"]
+        batch_size = train_setting_dict["BATCH_SIZE"]
+        # モデルとデータの読み込み先のディレクトリ
+        data_dir = f"/src/data/{task_name}/{train_setting_name}"
+        model_dir = f"/src/models/{task_name}/{train_setting_name}"
+        pid = None
+        perspective = "correctness"
+    else:
+        num_fold = NUM_FOLD_ACAS
+        task_name = "acasxu"
+        # n{i}_{j}_prop{p}の部分を正規表現で取り出し
+        pattern = r"acasxu_n(\d+)_(\d+)_prop(\d+)-fairness-setting\d+"
+        match = re.search(pattern, exp_name)
+        if match:
+            nnid = int(match.group(1)), int(match.group(2))
+            pid = int(match.group(3))
+            acas_setting = f"n{nnid[0]}_{nnid[1]}_prop{pid}"
+            logger.info(f"acas_setting: {acas_setting}")
+        data_dir = f"/src/data/{task_name}/{acas_setting}"
+        model_dir = f"/src/models/{task_name}/{acas_setting}"
+        perspective = "safety"
     ds_type = dataset_type(task_name)
-    collate_fn = None if ds_type != "text" else pad_collate
+    collate_fn = pad_collate if ds_type == "text" else None
 
     # ラベルがバイナリか否か
     is_binary = False
@@ -148,10 +169,6 @@ if __name__ == "__main__":
     # floatの場合はそれをrepairするニューロンの割合として（上位何％）解釈する
     repair_ratio = setting_dict["REPAIR_RATIO"]
 
-    # モデルとデータの読み込み先のディレクトリ
-    data_dir = f"/src/data/{task_name}/{train_setting_name}"
-    model_dir = f"/src/models/{task_name}/{train_setting_name}"
-
     # test dataloaderをロード (foldに関係ないので先にロードする)
     test_data_path = os.path.join(data_dir, f"test_loader.pt")
     test_loader = torch.load(test_data_path)
@@ -165,20 +182,30 @@ if __name__ == "__main__":
     df_repair_list, df_break_list = [], []
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
-        # 学習済みモデルをロード
-        model = select_model(task_name=task_name)
-        model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
-        model.load_state_dict(torch.load(model_path))
-        model.to(device)
-        model.eval()
-
-        # train setをロード
-        train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
-        train_loader = fix_dataloader(torch.load(train_data_path), collate_fn=collate_fn)
 
         # repair setをロード
         repair_data_path = os.path.join(data_dir, f"repair_loader_fold-{k}.pt")
         repair_loader = fix_dataloader(torch.load(repair_data_path), collate_fn=collate_fn)
+
+        # 学習済みモデルをロード
+        if not exp_name.startswith("acas"):
+            model = select_model(task_name=task_name)
+            model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
+            model.load_state_dict(torch.load(model_path))
+            # train setをロード
+            train_data_path = os.path.join(data_dir, f"train_loader_fold-{k}.pt")
+            train_loader = fix_dataloader(torch.load(train_data_path), collate_fn=collate_fn)
+            div_names = ["train", "repair", 'test']
+            div_dls = [train_loader, repair_loader, test_loader]
+        else:
+            # NOTE: acasの場合はkによらずモデルは変化しないがmodel定義の場所がばらけるのが嫌なのでここでやる
+            model = select_model(task_name=task_name, nnid=nnid)
+            target_lids = range(len(model.layers) - 1) # 最終層ニューロンは出力ニューロンなので含めない
+            target_nids = range(model.hidden_size) # 全ニューロンを対象にする
+            div_names = ["repair", 'test']
+            div_dls = [repair_loader, test_loader]
+        model.to(device)
+        model.eval()
 
         # fl_scoreをロード
         # flscoreに関してはpso関係ないので継承するのであれば継承先のものを使う
@@ -228,9 +255,7 @@ if __name__ == "__main__":
                 # 以下の処理はis_repairがFalseでrepが1以上のときはやらない(repairなしの場合はreps関係ないので1回だけでいい)
                 if is_repair or rep == 0:
                     # train/repair/test setそれぞれに対する予測
-                    for div_name, dataloader in zip(
-                        ["train", "repair", "test"], [train_loader, repair_loader, test_loader]
-                    ):
+                    for div_name, dataloader in zip(div_names, div_dls):
                         logger.info(f"{div_name} set...")
                         # 予測を実行して合ってるかどうか記録
                         ret_dict = eval_model(
@@ -242,6 +267,8 @@ if __name__ == "__main__":
                             neuron_location=neuron_location,
                             device=device,
                             is_binary=is_binary,
+                            perspective=perspective,
+                            pid=pid,
                         )
                         # accのみ取り出す
                         # div_acc = ret_dict["metrics"][0]
@@ -277,7 +304,7 @@ if __name__ == "__main__":
 
             # repair適用前後の精度と公平性の差分を取る
             # divisionごとに実行
-            for div_name in ["train", "repair", "test"]:
+            for div_name in div_names:
                 # 精度の差分
                 # div_acc_diff = acc_aft[div_name] - acc_bef[div_name]
                 # 公平性の差分 (値が低い方がいいので前から後を引く)
@@ -313,11 +340,15 @@ if __name__ == "__main__":
         #####################################
         # repair, break datasetsを作るループ#
         #####################################
-        for div in ["train", "repair", "test"]:
+        for div in div_names:
+            if not exp_name.startswith("acas"):
+                exp_metrics_path = os.path.join(exp_dir, "explanatory_metrics", train_setting_name, f"{div}_fold{k+1}.csv")
+            else:
+                csv_file_name = "test.csv" if div == "test" else f"{div}_fold{k+1}.csv"
+                exp_metrics_path = os.path.join(exp_dir, "explanatory_metrics", f"acasxu_{acas_setting}", csv_file_name)
             logger.info(f"processing fold {k} {div} set...")
 
             # 修正前に正解だったかどうかの情報をcareのsample metricsのファイルから得る
-            care_dir = exp_dir
             sm_path = os.path.join(sm_dir, f"{div}_fold{k+1}.csv")
             df = pd.read_csv(sm_path)
             # 修正前の予測結果(0が不正解, 1が正解)
@@ -335,7 +366,6 @@ if __name__ == "__main__":
             df["broken"] = (df["sm_corr_bef"] == 1) & (df["sm_corr_aft_sum"] != 5)  # 厳し目の決定方法
 
             # exp. metricsもロードしてきて，repaied, brokenなどの列と結合する
-            exp_metrics_path = os.path.join(care_dir, "explanatory_metrics", train_setting_name, f"{div}_fold{k+1}.csv")
             df_expmet = pd.read_csv(exp_metrics_path)
             df_all = pd.concat([df_expmet, df], axis=1)
             logger.info(f"df_all.shape: {df_all.shape}")

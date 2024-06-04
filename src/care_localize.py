@@ -92,7 +92,7 @@ if __name__ == "__main__":
             acas_setting = f"n{nnid[0]}_{nnid[1]}_prop{pid}"
             logger.info(f"acas_setting: {acas_setting}")
         data_dir = f"/src/data/{task_name}/{acas_setting}"
-        model_dir = f"/src/model/{task_name}/{acas_setting}"
+        model_dir = f"/src/models/{task_name}/{acas_setting}"
         # data_dir, model_dirがなかったら作る
         os.makedirs(data_dir, exist_ok=True)
         os.makedirs(model_dir, exist_ok=True)
