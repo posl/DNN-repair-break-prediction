@@ -168,7 +168,7 @@ class TabularModel(nn.Module):
             # 修正後の値を対象のニューロンにセット（現在のlidに対して）
             for hval, (target_lid, target_nid) in zip(hvals, neuron_location):
                 if lid == target_lid:
-                    # NOTE: 公式実装に準拠 (lib_models.pyのapply_repair_fixed())
+                    # NOTE: 公式実装に準拠 (lib_models.pyのapply_repair_fixed()) # XXX: これだとバッチの最初のサンプルに対してしか変更を適用してない気がする
                     fc_out[0][target_nid] *= 1 + torch.tensor(
                         hval, dtype=torch.float32, device=device
                     )
@@ -1056,6 +1056,49 @@ class ACASXuModel(nn.Module):
             # 介入したニューロン値に対しては全結合層の後のニューロンを介入後の値で置き換える
             if lid == target_lid:
                 fc_out[0][target_nid] = torch.tensor(hval, device=device)
+
+            # 最終層かどうかで場合分け
+            if len(layer) == 2:
+                o = layer[1](fc_out)  # relu
+            elif len(layer) == 1:
+                o = fc_out  # 最終層
+
+        prob = nn.Softmax(dim=1)(o)
+        pred_min = torch.argmin(prob, dim=1) # NOTE: ACAS Xuではスコア最小の物を選択して出力する
+        pred_max = torch.argmax(prob, dim=1)
+        return {"prob": prob, "pred": pred_min, "pred_min": pred_min, "pred_max": pred_max}
+
+    def predict_with_repair(self, x, hvals, neuron_location, device="cpu", is_normalized=True):
+        """対象のニューロンに摂動を加えた場合 (=パッチの候補を適用した場合) の予測結果を返す.
+
+        Args:
+            x (torch.Tensor): データのTensor.
+            hvals (list of float): 修正後のニューロンの値のリスト. indexは第三引数のneuron_locationと対応.
+            neuron_location (list of tuple(int, int)): 修正するニューロンの位置(レイヤ番号, ニューロン番号)を表すタプルのリスト.
+
+        Returns:
+            dict: 予測確率と予測ラベルの辞書.
+        """
+        o = x.to(device)
+        if not is_normalized:
+            o = self._normalize_input(o)
+        # 修正したいニューロンの数の確認
+        assert len(neuron_location) == len(
+            hvals
+        ), f"Error: len(neuron_location) != len(hvals)."
+        repair_num = len(neuron_location)
+
+        # layerごとの順伝搬
+        for lid, layer in enumerate(self.layers):
+            fc_out = layer[0](o)  # linear
+
+            # 修正後の値を対象のニューロンにセット（現在のlidに対して）
+            for hval, (target_lid, target_nid) in zip(hvals, neuron_location):
+                if lid == target_lid:
+                    # NOTE: 公式実装に準拠 (lib_models.pyのapply_repair_fixed())
+                    fc_out[:, target_nid] *= 1 + torch.tensor(
+                        hval, dtype=torch.float32, device=device
+                    )
 
             # 最終層かどうかで場合分け
             if len(layer) == 2:

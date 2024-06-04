@@ -40,3 +40,6 @@ echo CARE safety datasets...
 python care_localize.py /src/experiments/care/acasxu_n2_9_prop8-fairness-setting1.json
 python care_localize.py /src/experiments/care/acasxu_n3_5_prop2-fairness-setting1.json
 python care_localize.py /src/experiments/care/acasxu_n1_9_prop7-fairness-setting1.json
+python care_repair_fairness.py /src/experiments/care/acasxu_n2_9_prop8-fairness-setting1.json
+python care_repair_fairness.py /src/experiments/care/acasxu_n3_5_prop2-fairness-setting1.json
+python care_repair_fairness.py /src/experiments/care/acasxu_n1_9_prop7-fairness-setting1.json

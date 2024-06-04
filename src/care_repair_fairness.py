@@ -5,6 +5,7 @@ from lib.util import json2dict, dataset_type, fix_dataloader
 from lib.dataset import pad_collate
 from lib.log import set_exp_logging
 from lib.fairness import calc_fairness_ub
+from lib.safety import check_safety_prop
 import numpy as np
 
 np.random.seed(0)  # 乱数固定
@@ -24,7 +25,7 @@ TABULAR_FAIRNESS_SW = False  # FIXME: 最悪なので外部化するs
 
 # FIXME: 定数外部化
 num_reps = 5
-
+NUM_FOLD_ACAS = 5
 
 def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repaired_positions, alpha=0.1):
     """PSOの目的関数 (for tabular dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
@@ -66,13 +67,13 @@ def pso_fitness_tabular(particles, model, dataloader, sens_idx, sens_vals, repai
     return result
 
 
-def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, device, ds_type):
+def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, device, ds_type, pid=None):
     """PSOの目的関数 (for image dataset). 入力の形状は (PSOの粒子数, repairするニューロン数).
     公平性でなくaccのみを考慮する.
 
     Args:
 
-        particles (ndarray): ニューロンの重み?(TODO)をどれくらい調整するか. (PSOの粒子数, repairするニューロン数)という形状. PSOにおけるswarmに対応.
+        particles (ndarray): ニューロン値をどれくらい調整するか. (PSOの粒子数, repairするニューロン数)という形状. PSOにおけるswarmに対応.
         model (nn.Module): 修正対象のモデル.
         dataloader (torch.DataLoader): repairに使うデータセットのデータローダ
         repaired_positions (list of int): 修正するニューロンの位置(ニューロン番号)を表すリスト.
@@ -86,16 +87,23 @@ def pso_fitness_acc(particles, model, dataloader, repaired_positions, acc_org, d
     for p in particles:
         acc_tmp = 0
         for batch_idx, batch in enumerate(dataloader):
-            if ds_type != "text":
-                data, labels = batch[0].to(device), batch[1].to(device)
+            if ds_type == "safety":
+                data = batch[0].to(device=device)
                 ret_dicts = model.predict_with_repair(data, hvals=p, neuron_location=repaired_positions, device=device)
+                is_unsafe_list = check_safety_prop(ret_dicts, pid).cpu()
+                num_corr = len(is_unsafe_list) - sum(is_unsafe_list) # safety propが守られた
+                acc_tmp += num_corr / len(is_unsafe_list)
             else:
-                data, labels = batch[0].to(device), batch[1].to(device)
-                data_lens = batch[2]
-                ret_dicts = model.predict_with_repair(data, data_lens, hvals=p, neuron_location=repaired_positions, device=device)
-            preds = ret_dicts["pred"].cpu()
-            num_corr = sum(preds == labels.cpu())
-            acc_tmp += num_corr / len(preds)
+                if ds_type != "text":
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    ret_dicts = model.predict_with_repair(data, hvals=p, neuron_location=repaired_positions, device=device)
+                else:
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    data_lens = batch[2]
+                    ret_dicts = model.predict_with_repair(data, data_lens, hvals=p, neuron_location=repaired_positions, device=device)
+                preds = ret_dicts["pred"].cpu()
+                num_corr = sum(preds == labels.cpu())
+                acc_tmp += num_corr / len(preds)
         # バッチごとのaccをまとめて全体のaccにする(NOTE: 除算の誤差がきになる)
         acc_tmp /= len(dataloader)
         # デフォルトは最小化問題になってるので, 1-accにする
@@ -142,15 +150,32 @@ if __name__ == "__main__":
         logger.info(f"Inherit from {inherit_exp_name}")
 
     train_setting_path = setting_dict["TRAIN_SETTING_PATH"]
-    # 訓練時の設定名を取得
-    train_setting_name = os.path.splitext(train_setting_path)[0]
-
-    # 訓練時の設定も読み込む
-    train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
-    logger.info(f"TRAIN Settings: {train_setting_dict}")
-    num_fold = train_setting_dict["NUM_FOLD"]
-    task_name = train_setting_dict["TASK_NAME"]
-    batch_size = train_setting_dict["BATCH_SIZE"]
+    if not exp_name.startswith("acas"):
+        # 訓練時の設定名を取得
+        train_setting_name = os.path.splitext(train_setting_path)[0]
+        # 訓練時の設定も読み込む
+        train_setting_dict = json2dict(os.path.join(exp_dir, train_setting_path))
+        logger.info(f"TRAIN Settings: {train_setting_dict}")
+        num_fold = train_setting_dict["NUM_FOLD"]
+        task_name = train_setting_dict["TASK_NAME"]
+        batch_size = train_setting_dict["BATCH_SIZE"]
+        # モデルとデータの読み込み先のディレクトリ
+        data_dir = f"/src/data/{task_name}/{train_setting_name}"
+        model_dir = f"/src/models/{task_name}/{train_setting_name}"
+        pid = None
+    else:
+        num_fold = NUM_FOLD_ACAS
+        task_name = "acasxu"
+        # n{i}_{j}_prop{p}の部分を正規表現で取り出し
+        pattern = r"acasxu_n(\d+)_(\d+)_prop(\d+)-fairness-setting\d+"
+        match = re.search(pattern, exp_name)
+        if match:
+            nnid = int(match.group(1)), int(match.group(2))
+            pid = int(match.group(3))
+            acas_setting = f"n{nnid[0]}_{nnid[1]}_prop{pid}"
+            logger.info(f"acas_setting: {acas_setting}")
+        data_dir = f"/src/data/{task_name}/{acas_setting}"
+        model_dir = f"/src/model/{task_name}/{acas_setting}"
     ds_type = dataset_type(task_name)
     collate_fn = pad_collate if ds_type == "text" else None
 
@@ -177,10 +202,6 @@ if __name__ == "__main__":
     pso_iters = pso_setting_dict["PSO_ITERS"]
     c1, c2, w = pso_setting_dict["C1"], pso_setting_dict["C2"], pso_setting_dict["W"]
 
-    # モデルとデータの読み込み先のディレクトリ
-    data_dir = f"/src/data/{task_name}/{train_setting_name}"
-    model_dir = f"/src/models/{task_name}/{train_setting_name}"
-
     # care resultのディレクトリを作成する
     care_dir = os.path.join(model_dir, "care-result")
     os.makedirs(care_dir, exist_ok=True)
@@ -188,10 +209,17 @@ if __name__ == "__main__":
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
+
         # 学習済みモデルをロード
-        model = select_model(task_name=task_name)
-        model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
-        model.load_state_dict(torch.load(model_path))
+        if not exp_name.startswith("acas"):
+            model = select_model(task_name=task_name)
+            model_path = os.path.join(model_dir, f"trained_model_fold-{k}.pt")
+            model.load_state_dict(torch.load(model_path))
+        else:
+            # NOTE: acasの場合はkによらずモデルは変化しないがmodel定義の場所がばらけるのが嫌なのでここでやる
+            model = select_model(task_name=task_name, nnid=nnid)
+            target_lids = range(len(model.layers) - 1) # 最終層ニューロンは出力ニューロンなので含めない
+            target_nids = range(model.hidden_size) # 全ニューロンを対象にする
         model.to(device)
         model.eval()
 
@@ -208,15 +236,22 @@ if __name__ == "__main__":
         org_correctness = []  # 予測の正解確認用
         # repair_loaderからバッチを読み込み
         for batch_idx, batch in enumerate(check_loader):
-            if ds_type != "text":
-                data, labels = batch[0].to(device), batch[1].to(device)
-                org_preds = model.predict(data, device=device)["pred"]
+            if ds_type == "safety":
+                data = batch[0].to(device=device)
+                outputs = model.predict(x=data, device=device)
+                org_correctness_tmp = check_safety_prop(outputs, pid)
+                # boolの配列org_predsをflipして (safetyを満たしたなら1, さもなくば0) intの配列にする
+                org_correctness_tmp = [int(not o) for o in org_correctness_tmp.cpu().tolist()]
             else:
-                data, labels = batch[0].to(device), batch[1].to(device)
-                data_lens = batch[2]
-                org_preds = model.predict(data, data_lens, device=device)["pred"]
-            # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
-            org_correctness_tmp = (org_preds.cpu() == labels.cpu()).tolist()
+                if ds_type != "text":
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    org_preds = model.predict(data, device=device)["pred"]
+                else:
+                    data, labels = batch[0].to(device), batch[1].to(device)
+                    data_lens = batch[2]
+                    org_preds = model.predict(data, data_lens, device=device)["pred"]
+                # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+                org_correctness_tmp = (org_preds.cpu() == labels.cpu()).tolist()
             # 全体の正解配列に追加
             org_correctness.extend(org_correctness_tmp)
             # 正解数
@@ -291,6 +326,7 @@ if __name__ == "__main__":
                     "device": device,
                     "acc_org": acc_org,
                     "ds_type": ds_type,
+                    "pid": pid,
                 }
                 # Run optimization
                 best_cost, best_pos = optimizer.optimize(pso_fitness_acc, iters=pso_iters, **obj_args)
@@ -307,20 +343,29 @@ if __name__ == "__main__":
             aft_correctness = []  # 予測の正解確認用
             # best_posをhvalsにセットして予測を実行
             for batch_idx, batch in enumerate(check_loader):
-                if ds_type != "text":
-                    data, labels = batch[0].to(device), batch[1].to(device)
+                if ds_type == "safety":
+                    data = batch[0].to(device=device)
                     ret_dicts = model.predict_with_repair(
                         data, hvals=best_pos, neuron_location=repaired_positions, device=device
                     )
+                    aft_correctness_tmp = check_safety_prop(ret_dicts, pid)
+                    # boolの配列org_predsをflipして (safetyを満たしたなら1, さもなくば0) intの配列にする
+                    aft_correctness_tmp = [int(not o) for o in aft_correctness_tmp.cpu().tolist()]
                 else:
-                    data, labels = batch[0].to(device), batch[1].to(device)
-                    data_lens = batch[2]
-                    ret_dicts = model.predict_with_repair(
-                        data, data_lens, hvals=best_pos, neuron_location=repaired_positions, device=device
-                    )
-                preds = ret_dicts["pred"].cpu()
-                # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
-                aft_correctness_tmp = (preds.cpu() == labels.cpu()).tolist()
+                    if ds_type != "text":
+                        data, labels = batch[0].to(device), batch[1].to(device)
+                        ret_dicts = model.predict_with_repair(
+                            data, hvals=best_pos, neuron_location=repaired_positions, device=device
+                        )
+                    else:
+                        data, labels = batch[0].to(device), batch[1].to(device)
+                        data_lens = batch[2]
+                        ret_dicts = model.predict_with_repair(
+                            data, data_lens, hvals=best_pos, neuron_location=repaired_positions, device=device
+                        )
+                    preds = ret_dicts["pred"].cpu()
+                    # repair_loaderの各バッチに対する予測の正解(1), 不正解(0)の配列
+                    aft_correctness_tmp = (preds.cpu() == labels.cpu()).tolist()
                 # 全体の正解配列に追加
                 aft_correctness.extend(aft_correctness_tmp)
             # repaired/brokenの数を数える

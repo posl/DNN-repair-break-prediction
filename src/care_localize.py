@@ -124,6 +124,7 @@ if __name__ == "__main__":
             target_nids
         ), f"Error: len(target_lid)({len(target_lids)}) != len(target_nid)({len(target_nids)})"
 
+    time_per_fold = []
     # 各foldのtrain/repairをロードして予測
     for k in range(num_fold):
         logger.info(f"processing fold {k}...")
@@ -136,6 +137,8 @@ if __name__ == "__main__":
         else:
             # NOTE: acasの場合はkによらずモデルは変化しないがmodel定義の場所がばらけるのが嫌なのでここでやる
             model = select_model(task_name=task_name, nnid=nnid)
+            target_lids = range(len(model.layers) - 1) # 最終層ニューロンは出力ニューロンなので含めない
+            target_nids = range(model.hidden_size) # 全ニューロンを対象にする
         model.to(device)
         model.eval()
 
@@ -174,9 +177,6 @@ if __name__ == "__main__":
         # 計算したい各レイヤ/ニューロンに対してFLのスコア（Average Causal Effects）を算出
         # ここからsafetyデータ用====================================================
         if ds_type == "safety":
-            assert (target_lids is None) and (target_nids is None)
-            target_lids = range(len(model.layers) - 1) # 最終層ニューロンは出力ニューロンなので含めない
-            target_nids = range(model.hidden_size)
             # target_layer, neuronごとにFLスコアを計算
             for target_lid, target_nids_for_layer in zip(target_lids, [target_nids for _ in range(len(target_lids))]):
                 layer_dist = []
@@ -342,9 +342,12 @@ if __name__ == "__main__":
         e = time.clock()
         # logger.info(f"End time: {e}")
         logger.info(f"Total execution time for FL: {e-s} sec.")
+        time_per_fold.append(e-s)
         # fl_scoreを降順に並び替えて保存する
         fl_score_sorted = np.array(sorted(fl_score.items(), key=lambda v: v[1], reverse=True))
         logger.info(f"SORTED FL SCORE: \n{fl_score_sorted}")
         fl_score_save_path = os.path.join(exp_dir, f"repair_results/flscore_{exp_name}_fold{k+1}.npy")
         np.save(fl_score_save_path, fl_score_sorted)
         logger.info(f"saved to {fl_score_save_path}")
+    # 全foldのFL時間の平均をログに残す
+    logger.info(f"Average execution time for FL: {np.mean(time_per_fold)} sec.")
