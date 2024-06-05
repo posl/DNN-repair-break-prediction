@@ -2,7 +2,6 @@
   "TRAIN_SETTING_PATH": "census-training-setting1.json", 
   "SENS_NAME": "Gender",
   "SENS_IDX": -1,
-  "SENS_VALS": "[0, 1]",
   "TARGET_CLS": 1,
   "NUM_STEPS": 8,
   "TARGET_LAYER": [0, 1, 2, 3, 4],

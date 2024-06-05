@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm import tqdm
 # lib.safetyもimport
 from lib.safety import check_safety_prop
 
@@ -84,7 +85,7 @@ def sm_fairness(
     # 返したいリスト
     sm_fair_list = []
     dataset = dataloader.dataset
-    for i, (inst, _) in enumerate(dataset):
+    for i, (inst, _) in tqdm(enumerate(dataset), total=len(dataset)):
         # サンプルに対するfairnessみたいな値（sensitive featureだけ変えた時の予測確率の変化の最大値）
         max_diff = 0.0
         if not is_repair:

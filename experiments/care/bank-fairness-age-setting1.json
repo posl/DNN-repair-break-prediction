@@ -2,7 +2,6 @@
   "TRAIN_SETTING_PATH": "bank-training-setting1.json", 
   "SENS_NAME": "Age",
   "SENS_IDX": 0,
-  "SENS_VALS": "np.linspace(-1.71, 0.68, 2)",
   "TARGET_CLS": 1,
   "NUM_STEPS": 8,
   "TARGET_LAYER": [0, 1, 2, 3, 4],
