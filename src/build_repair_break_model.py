@@ -162,8 +162,6 @@ sens_name = "gender"
 # sens_name = "age"
 # fold数
 num_folds = 5
-# 説明変数の列名のリスト
-exp_metrics = ["pcs", "lps", "loss", "entropy"]
 # =====================================================
 
 
@@ -204,6 +202,7 @@ if __name__ == "__main__":
         test_ds_dir = os.path.join(exp_dir, "repair_break_dataset/preprocessed_data", test_csv_name)
         df_train = pd.read_csv(train_ds_dir)
         df_test = pd.read_csv(test_ds_dir)
+        exp_metrics = [col for col in df_train.columns if col not in obj_col]
         # 形状の確認
         logger.info(f"df_train.shape={df_train.shape}, df_test.shape={df_test.shape}")
         logger.info(f"col {obj_col} distribution of trainval:\n{df_train[obj_col].value_counts()}")
@@ -214,16 +213,24 @@ if __name__ == "__main__":
         majo = obj_col_cnts.index.values[0]  # 多数派
         mino = not majo  # 少数派
         majo_cnt = obj_col_cnts[majo]  # 多数派のサンプル数
-        mino_cnt = obj_col_cnts[mino]  # 少数派のサンプル数
-        balance = majo_cnt / mino_cnt  # 多数派と少数派のサンプル数の比
+        mino_cnt = obj_col_cnts.sum() - obj_col_cnts[majo]  # 少数派のサンプル数
+        balance = majo_cnt / mino_cnt if mino_cnt != 0 else None # 多数派と少数派のサンプル数の比
         logger.info(f"majo_cnt: {majo_cnt}, mino_cnt: {mino_cnt}, balance: {balance}")
+        # 片方のサンプルしかない (minor classが0の) 場合, モデルを作らずそのことを通知して終了
+        if mino_cnt == 0:
+            logger.info("There is only one class in the dataset. No model is created.")
+            continue
         # df_trainに対するresamplingを実行する
         # resamplingすべきかどうかの判断
         if mino_cnt >= 10000: # df_trainの少数派行数サイズによって, under samplingの方法を変える
             df_train = under_sampling(df_train, obj_col, minority=mino, mode="whole_ratio", whole_ratio=2*inv_nn_folds)
+            logger.info("undersampling is performed. mode='whole_ratio'")
         elif balance >= 5: # 多数派と少数派のサンプル数の比が5以上なら, 多数派からのunder samplingを実行
             # resamplingの実行
             df_train = under_sampling(df_train, obj_col, minority=mino, mode="reduce_ratio", reduce_ratio=inv_nn_folds)
+            logger.info("undersampling is performed. mode='reduce_ratio'")
+        elif balance is None:
+            logger.info("undersampling is not performed.")
         X_train, y_train = df_train[exp_metrics], df_train[obj_col]
         # テストデータをX, yに分割
         X_test, y_test = df_test[exp_metrics], df_test[obj_col]

@@ -35,8 +35,6 @@ def outlier_iqr(df, obj_col):
 # =====================================================
 # 対象とするdivision (train, repair, testのいずれか)
 divisions = ["train", "repair", "test"]
-# 説明変数の列名のリスト
-exp_metrics = ["pcs", "lps", "loss", "entropy"]
 # testの割合
 test_ratio = 0.2
 # 分割時のシード
@@ -130,11 +128,12 @@ if __name__ == "__main__":
 
         # violinplotにまとめる
         for mode, df in zip(["trainval", "test", "all"], [df_train, df_test, df_all]):
+            num_exp_mets = len(df.columns) - 1
             logger.info(f"Making violinplot of {mode} set of method={method}, dataset={dataset}, rb={rb}...")
             obj_col = "repaired" if rb == "repair" else "broken"
             ltrue = df[obj_col].sum()
             logger.info(f"df_{mode}[rb].shape: {df.shape}, #{obj_col}: {ltrue}, #non-{obj_col}: {len(df) - ltrue}")
-            fig, axes = plt.subplots(nrows=1, ncols=4, sharex=False, figsize=(12, 3))
+            fig, axes = plt.subplots(nrows=1, ncols=num_exp_mets, sharex=False, figsize=(num_exp_mets*3, 3))
             plt.subplots_adjust(wspace=0.2, hspace=0.2)
             for i, feat in enumerate(feats):
                 sns.violinplot(data=df, x=obj_col, y=feat, palette="Greys", ax=axes[i], split=True)
