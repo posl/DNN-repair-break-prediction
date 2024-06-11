@@ -1,17 +1,56 @@
-import os, sys, argparse, re
+import os, sys, argparse, pickle
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from collections.abc import Iterable
 from collections import defaultdict
 import pandas as pd
 import numpy as np
 from lib.fairness import eval_independence_fairness
 from lib.model import select_model, eval_model
-from lib.util import json2dict, dataset_type
+from lib.util import json2dict, dataset_type, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 DS_LIST = ["census", "credit", "bank"]
+
+def set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device):
+    """
+    修正後の重みをモデルにセットする関数
+
+    Parameters
+    ------------------
+    model: keras model
+        修正前のモデル
+    deltas: dict
+        修正後の重みを保持する辞書
+    dic_keras_lid_to_torch_layers: dict
+        kerasモデルでの修正対象レイヤのインデックスとtorchモデルのレイヤの対応辞書
+    device: str
+
+    Returns
+    ------------------
+    model: keras model
+        deltasで示される重みをセットした後の, 修正後のモデル
+    """
+    for idx_to_tl, delta in deltas.items():
+        if isinstance(idx_to_tl, Iterable):
+            idx_to_tl, idx_to_w = idx_to_tl
+        else:
+            idx_to_tl = idx_to_tl
+        tl = dic_keras_lid_to_torch_layers[idx_to_tl]
+        lname = tl.__class__.__name__
+        if lname == "Conv2d" or lname == "Linear":
+            tl.weight.data = torch.from_numpy(delta).to(device)
+        elif lname == "LSTM":
+            for i, tp in enumerate(tl.parameters()):
+                if i == idx_to_w:
+                    tp.data = torch.from_numpy(delta).to(device)
+        else:
+            print("{} not supported".format(lname))
+            assert False
+    return model
+
 
 if __name__ == "__main__":
     # gpuが使用可能かをdeviceにセット
@@ -101,24 +140,9 @@ if __name__ == "__main__":
         else:
             sens_vals = None
 
-        # fl_scoreをロード
-        flscore_path = f"/src/experiments/care/repair_results/flscore_{ds}-fairness-setting1_fold{k+1}.npy"
-        fl_scores = np.load(flscore_path)
-        repair_num = (
-            repair_ratio if isinstance(repair_ratio, int) else np.ceil(len(fl_scores) * repair_ratio).astype(int)
-        )
-        # 修正対象のニューロンの位置(何層目の,何番目のニューロンか)
-        repaired_positions = fl_scores[:repair_num][:, 0]
-        # target_lidが固定かどうかチェック
-        if "fixed" in repaired_positions[0]:
-            # target_neuronを示す1次元の配列にする
-            repaired_positions = np.array([int(re.search(r"\d+", entry).group(0)) for entry in repaired_positions])
-        # target_lidの情報も必要な場合
-        else:
-            repaired_positions = np.array(list(map(eval, repaired_positions)))
-        logger.info(f"repaired_positions: {repaired_positions}")
+        # idx_to_tlとmodelのレイヤの対応
+        dic_keras_lid_to_torch_layers = keras_lid_to_torch_layers(task_name=ds, model=model)
 
-        # 各dataloaderに対するfairness
         for div_name, div_dl in zip(["train", "repair", "test"], [train_loader, repair_loader, test_loader]):
             logger.info(f"processing {div_name} set...")
             # fold k のモデルのkeyに対するexp metricsをロード
@@ -132,19 +156,21 @@ if __name__ == "__main__":
             # 修正のnum_reps回の適用結果に関してそれぞれ見ていく
             for rep in range(5):
                 logger.info(f"processing rep {rep}...")
-
-                # patchをロード
-                # patchはpso_settingが変わると変わるので，常にexp_nameを参照
-                patch_path = os.path.join(model_dir, "care-result", f"rep{rep}", f"patch_{ds}-fairness-setting1_fold{k}.npy")
-                patch = np.load(patch_path)
-                hvals, neuron_location = patch, repaired_positions
+                # arachneの修正済みweightをロード
+                weight_save_dir = os.path.join(model_dir, "arachne-weight", f"rep{rep}")
+                weight_file_name = [f for f in os.listdir(weight_save_dir) if f.endswith(f"{k}.pkl")][0]
+                weight_save_path = os.path.join(weight_save_dir, weight_file_name)
+                with open(weight_save_path, "rb") as f:
+                    deltas = pickle.load(f)
+                # Arachneの結果えられたdeltasをモデルにセット
+                logger.info("Set the patches to the model...")
+                repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
 
                 # fairnessの結果を取得
                 fairness_dict[div_name] = eval_independence_fairness(
-                model=model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls, is_repair=True, hvals=hvals, neuron_location=repaired_positions
+                    model=repaired_model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls
                 )[1]
                 is_corr_aft[:, rep] = 1 - fairness_dict[div_name] # NOTE: 高い方が良い, にするため
-            
             # repair/breakの対象を決定するための閾値を設定
             sm_fair_th = 0.95 # 1-fairnessがこの閾値以上ならOK，より小さいならNG
             # is_corr_aftの各行において，閾値以上の値の数を取得
