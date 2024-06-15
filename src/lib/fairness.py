@@ -10,7 +10,7 @@ from logging import getLogger
 logger = getLogger("base_logger")
 
 
-def get_discriminatory_instances_candidates(inst, sens_idx, sens_vals=None):
+def get_discriminatory_instances_candidates(inst, sens_idx, sens_vals=None, device="cpu"):
     """sensitive featureだけを変えたインスタンスのリストを返す.
     数値データの場合にはsensitive featureの列インデックス（int）と値の範囲を, カテゴリデータ(OHE済)に対してはsensitive featureの列インデックス（list）を指定.
 
@@ -53,7 +53,7 @@ def get_discriminatory_instances_candidates(inst, sens_idx, sens_vals=None):
             # 元のtensorをクローン（値渡し）
             _inst = inst.clone()
             # 新たなOHE vector用のtensorを生成しbit番目だけ1にする
-            sv = torch.zeros(len(sens_idx), dtype=inst[sens_idx].dtype)
+            sv = torch.zeros(len(sens_idx), dtype=inst[sens_idx].dtype, device=device)
             sv[bit] = 1
             # sensitive featureの値だけ変える
             _inst[sens_idx] = sv
@@ -62,7 +62,7 @@ def get_discriminatory_instances_candidates(inst, sens_idx, sens_vals=None):
 
 
 def sm_fairness(
-    model, dataloader, sens_idx, sens_vals=None, target_cls=1, is_repair=False, hvals=None, neuron_location=None
+    model, dataloader, sens_idx, sens_vals=None, target_cls=1, is_repair=False, hvals=None, neuron_location=None, device="cpu"
 ):
     """CARE論文で言われているindependence-basedのfairnessを各データに対して計算してlistにして返す.
 
@@ -86,26 +86,28 @@ def sm_fairness(
     sm_fair_list = []
     dataset = dataloader.dataset
     for i, (inst, _) in tqdm(enumerate(dataset), total=len(dataset)):
+        inst = inst.to(device)
         # サンプルに対するfairnessみたいな値（sensitive featureだけ変えた時の予測確率の変化の最大値）
         max_diff = 0.0
         if not is_repair:
             # 修正前の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            o = model.predict(inst.view(1, -1))["prob"].view(-1)[target_cls]
+            o = model.predict(inst.view(1, -1), device=device)["prob"].view(-1)[target_cls]
         else:
             # is_repairがTrueなのにhvalsやneuron_locationがNoneならassertion errorにする.
             assert (
                 hvals is not None and neuron_location is not None
             ), "despite is_repair=True, hvals and neuron_location are None!!!"
             # 修正後の重みで予測. NOTE: .predict はバッチ想定なので .view が必要.
-            o = model.predict_with_repair(inst.view(1, -1), hvals, neuron_location)["prob"].view(-1)[target_cls]
+            o = model.predict_with_repair(inst.view(1, -1), hvals, neuron_location, device=device)["prob"].view(-1)[target_cls]
         # sensitive featureだけを変えたインスタンスのリストを得る
-        inst_disc_list = get_discriminatory_instances_candidates(inst=inst, sens_idx=sens_idx, sens_vals=sens_vals)
+        inst_disc_list = get_discriminatory_instances_candidates(inst=inst, sens_idx=sens_idx, sens_vals=sens_vals, device=device)
         # 変更後の各サンプルについて, 予測確率の差分を取得
         for inst_disc in inst_disc_list:
+            inst_disc = inst_disc.to(device)
             if not is_repair:
-                o_prime = model.predict(inst_disc.view(1, -1))["prob"].view(-1)[target_cls]
+                o_prime = model.predict(inst_disc.view(1, -1), device=device)["prob"].view(-1)[target_cls]
             else:
-                o_prime = model.predict_with_repair(inst_disc.view(1, -1), hvals, neuron_location)["prob"].view(-1)[
+                o_prime = model.predict_with_repair(inst_disc.view(1, -1), hvals, neuron_location, device=device)["prob"].view(-1)[
                     target_cls
                 ]
             # 予測確率の差の絶対値を取得
@@ -118,7 +120,7 @@ def sm_fairness(
 
 
 def eval_independence_fairness(
-    model, dataloader, sens_idx, sens_vals=None, target_cls=1, is_repair=False, hvals=None, neuron_location=None
+    model, dataloader, sens_idx, sens_vals=None, target_cls=1, is_repair=False, hvals=None, neuron_location=None, device="cpu"
 ):
     """CARE論文で言われているindependence-basedのfairnessを計算する.
 
@@ -135,7 +137,7 @@ def eval_independence_fairness(
     Returns:
         上式のy_fair, サンプルごとのsm_fairのリスト
     """
-    sm_fair_list = sm_fairness(model, dataloader, sens_idx, sens_vals, target_cls, is_repair, hvals, neuron_location)
+    sm_fair_list = sm_fairness(model, dataloader, sens_idx, sens_vals, target_cls, is_repair, hvals, neuron_location, device)
     # データセット全体の平均として返す
     y_fair = sum(sm_fair_list) / len(sm_fair_list)
     return y_fair, sm_fair_list

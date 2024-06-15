@@ -5,7 +5,7 @@ from collections import defaultdict
 import pandas as pd
 import numpy as np
 from lib.fairness import eval_independence_fairness
-from lib.model import select_model, eval_model
+from lib.model import select_model, is_model_on_gpu
 from lib.util import json2dict, dataset_type, keras_lid_to_torch_layers
 from lib.log import set_exp_logging
 import torch
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("dataset", choices=DS_LIST, help=f"dataset name should be in {DS_LIST}")
     args = parser.parse_args()
     ds = args.dataset
-    method = "care"
+    method = "arachne"
     # log setting
     care_dir = "/src/experiments/care/"
     this_file_name = os.path.basename(__file__).replace(".py", "").replace("_", "-")
@@ -165,10 +165,11 @@ if __name__ == "__main__":
                 # Arachneの結果えられたdeltasをモデルにセット
                 logger.info("Set the patches to the model...")
                 repaired_model = set_new_weights(model, deltas, dic_keras_lid_to_torch_layers, device)
+                repaired_model.to(device)
 
                 # fairnessの結果を取得
                 fairness_dict[div_name] = eval_independence_fairness(
-                    model=repaired_model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls
+                    model=repaired_model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls, device=device
                 )[1]
                 is_corr_aft[:, rep] = 1 - fairness_dict[div_name] # NOTE: 高い方が良い, にするため
             # repair/breakの対象を決定するための閾値を設定

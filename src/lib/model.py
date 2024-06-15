@@ -1435,3 +1435,6 @@ def sort_keys_by_cnt(misclf_dic):
         cnts.append([misclf_key, len(misclf_list)])
     sorted_keys = [v[0] for v in sorted(cnts, key=lambda v: v[1], reverse=True)]
     return sorted_keys
+
+def is_model_on_gpu(model):
+    return next(model.parameters()).is_cuda

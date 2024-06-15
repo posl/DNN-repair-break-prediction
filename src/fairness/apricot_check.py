@@ -21,7 +21,7 @@ if __name__ == "__main__":
     parser.add_argument("dataset", choices=DS_LIST, help=f"dataset name should be in {DS_LIST}")
     args = parser.parse_args()
     ds = args.dataset
-    method = "care"
+    method = "apricot"
     # log setting
     care_dir = "/src/experiments/care/"
     this_file_name = os.path.basename(__file__).replace(".py", "").replace("_", "-")
@@ -121,7 +121,7 @@ if __name__ == "__main__":
 
                 # fairnessの結果を取得
                 fairness_dict[div_name] = eval_independence_fairness(
-                    model=model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls
+                    model=model, dataloader=div_dl, sens_idx=sens_idx, sens_vals=sens_vals, target_cls=target_cls, device=device
                 )[1]
                 is_corr_aft[:, rep] = 1 - fairness_dict[div_name] # NOTE: 高い方が良い, にするため
 
