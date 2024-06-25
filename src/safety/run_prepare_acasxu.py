@@ -4,7 +4,7 @@ import os, sys, subprocess
 
 if __name__ == "__main__":
     inputs = [
-        # [2, 9, 8],
+        [2, 9, 8],
         [3, 5, 2],
         [1, 9, 7],
     ]
