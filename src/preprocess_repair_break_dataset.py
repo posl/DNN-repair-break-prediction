@@ -62,7 +62,7 @@ if __name__ == "__main__":
     for rb in ["repair", "break"]:
         logger.info(f"method={method}, dataset={dataset}, rb={rb}")
         # repair/break datasetのファイル名
-        if method == "care":
+        if method == "care" or method == "aprnn":
             rb_ds_filename = f"{dataset}-fairness-setting{sid}-{rb}.csv"
         elif method == "apricot" or method == "arachne":
             rb_ds_filename = f"{dataset}-training-setting{sid}-{rb}.csv"
@@ -105,7 +105,7 @@ if __name__ == "__main__":
         df_test[feats] = pt.transform(df_test[feats])
 
         # trainvalの方をcsvで保存
-        if method == "care":
+        if method == "care" or method =="aprnn":
             rb_ds_trainval_filename = f"{dataset}-fairness-setting{sid}-{rb}-trainval.csv"
         elif method == "apricot" or method == "arachne":
             rb_ds_trainval_filename = f"{dataset}-training-setting{sid}-{rb}-trainval.csv"
@@ -115,7 +115,7 @@ if __name__ == "__main__":
         df_train.to_csv(rb_ds_trainval_path, index=False)
 
         # testの方をcsvで保存
-        if method == "care":
+        if method == "care" or method == "aprnn":
             rb_ds_test_filename = f"{dataset}-fairness-setting{sid}-{rb}-test.csv"
         elif method == "apricot" or method == "arachne":
             rb_ds_test_filename = f"{dataset}-training-setting{sid}-{rb}-test.csv"

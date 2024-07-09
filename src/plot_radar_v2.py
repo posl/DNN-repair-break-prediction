@@ -64,13 +64,13 @@ if __name__ == "__main__":
         "correctness": ["care", "apricot", "arachne"],
         "robustness": ["care", "apricot", "arachne"],
         "fairness": ["care", "apricot", "arachne"],
-        "safety": ["care"],
+        "safety": ["care", "aprnn"],
     }
     perspectives2datasets = {
         "correctness": ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"],
         "robustness": ["c10c", "fmc"],
         "fairness": ["credit", "census", "bank"],
-        "safety": ["acasxu_n1_9_prop7", "acasxu_n2_9_prop8", "acasxu_n3_5_prop2"],
+        "safety": ["acasxu_n2_9_prop8", "acasxu_n3_5_prop2"],  # NOTE: skipping "acasxu_n1_9_prop7"
     }
 
     # 描画時の表示用のラベル名たち
@@ -88,7 +88,7 @@ if __name__ == "__main__":
         "acasxu_n2_9_prop8": "ACAS N2,9, P8",
         "acasxu_n3_5_prop2": "ACAS N3,5, P2",
     }
-    method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne"}
+    method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne", "aprnn": "APRNN"}
 
     # perspectives2methodsのリストの中で最大の長さを設定
     num_col = max([len(methods) for methods in perspectives2methods.values()])
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     fig.legend(bbox_to_anchor=(0.5, bbox_to_anchor_y), loc="lower center", ncol=2, fontsize=15, facecolor='white', edgecolor='none') # cだけなら1.10, rfsなら1.06
     fig.tight_layout()
     fig.subplots_adjust(
-        left=0, right=1, bottom=0, top=1, hspace=0.12, wspace=0.1
+        left=0, right=1, bottom=0, top=1, hspace=0.15, wspace=0.18
     )  # この1行を入れる
     # fig.show()
     pers_id = "".join([pers[0] for pers in perspectives])

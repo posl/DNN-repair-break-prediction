@@ -930,7 +930,7 @@ class ACASXuModel(nn.Module):
     レイヤの数とニューロンの数は固定.
     """
 
-    def __init__(self, nnid):
+    def __init__(self, nnid, model_type="default", aprnn_path=None):
         super().__init__()
         # 入出力のサイズやニューロン数は固定
         self.input_dim, self.output_dim = 5, 5
@@ -946,31 +946,51 @@ class ACASXuModel(nn.Module):
         )
         # 重みとバイアスのファイルパスを指定してロードしてセット
         self.nn_dir = f"/src/models/acasxu/original_weight/nnet_{nnid[0]}_{nnid[1]}"
-        self._load_weights_and_biases()
+        self.aprnn_path = aprnn_path
+        self._load_weights_and_biases(model_type=model_type)
         logger.info(self.count_neurons_params())
         # これらは入力の正規化に必要
         self.means = [19791.091, 0, 0, 650, 600]
         self.ranges = [60261, 6.283186, 6.283186, 1100, 1200]
     
-    def _load_weights_and_biases(self):
+    def _load_weights_and_biases(self, model_type="default"):
         """
         self.nnid (tuple) で指定されるモデルファイルから各層の重みとバイアスをロードしてモデルにセットする.
         """
-        # 重みとバイアスのファイルパス
-        weight_files = [f"{self.nn_dir}/weights/w{i+1}.txt" for i in range(len(self.layers))]
-        bias_files = [f"{self.nn_dir}/bias/b{i+1}.txt" for i in range(len(self.layers))]
 
-        # 各層に重みとバイアスを設定
-        for i, layer in enumerate(self.layers):
-            if isinstance(layer[0], nn.Linear):
-                # 重みの読み込み
-                with open(weight_files[i], 'r') as f:
-                    weights = np.array(eval(f.read()), dtype=np.float32)
-                with open(bias_files[i], 'r') as f:
-                    biases = np.array(eval(f.read()), dtype=np.float32)
-                # 重みとバイアスの設定
-                layer[0].weight.data = torch.tensor(weights, dtype=torch.float32)
-                layer[0].bias.data = torch.tensor(biases, dtype=torch.float32)
+        if model_type == "default":
+            # 重みとバイアスのファイルパス
+            weight_files = [f"{self.nn_dir}/weights/w{i+1}.txt" for i in range(len(self.layers))]
+            bias_files = [f"{self.nn_dir}/bias/b{i+1}.txt" for i in range(len(self.layers))]
+
+            # 各層に重みとバイアスを設定
+            for i, layer in enumerate(self.layers):
+                if isinstance(layer[0], nn.Linear):
+                    # 重みの読み込み
+                    with open(weight_files[i], 'r') as f:
+                        weights = np.array(eval(f.read()), dtype=np.float32)
+                    with open(bias_files[i], 'r') as f:
+                        biases = np.array(eval(f.read()), dtype=np.float32)
+                    # 重みとバイアスの設定
+                    layer[0].weight.data = torch.tensor(weights, dtype=torch.float32)
+                    layer[0].bias.data = torch.tensor(biases, dtype=torch.float32)
+        elif model_type == "aprnn":
+            assert self.aprnn_path is not None, "aprnn_path must be specified."
+            params_dict = torch.load(self.aprnn_path)
+            wdic, bdic = {}, {}
+            for k, v in params_dict.items():
+                if "weight" in k:
+                    wdic[k] = v
+                elif "bias" in k:
+                    bdic[k] = v
+            wlist = list(wdic.values())
+            blist = list(bdic.values())
+            for i, layer in enumerate(self.layers):
+                if isinstance(layer[0], nn.Linear):
+                    layer[0].weight.data = torch.tensor(wlist[i], dtype=torch.float32)
+                    layer[0].bias.data = torch.tensor(blist[i], dtype=torch.float32)
+        else:
+            raise ValueError(f"model_type {model_type} is not supported.")
     
     def _normalize_input(self, x):
         """入力を正規化"""

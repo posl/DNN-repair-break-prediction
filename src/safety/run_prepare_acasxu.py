@@ -1,6 +1,7 @@
 """prepare_acasxu.pyを特定の入力引数に対して実行する"""
 
 import os, sys, subprocess
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 if __name__ == "__main__":
     inputs = [
