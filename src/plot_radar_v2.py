@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, argparse
 from itertools import product
 import pandas as pd
 import numpy as np
@@ -48,17 +48,27 @@ def get_df(pers, method, dataset, rb):
 
 
 if __name__ == "__main__":
-    rb = sys.argv[1]
+    # argparseでrbとperspectiveを受け取る
+    parser = argparse.ArgumentParser()
+    parser.add_argument("rb", type=str, help="repair or break", choices=["repair", "break"])
+    parser.add_argument("perspective", type=str, help="all, correctness, robustness, fairness, safety", choices=["all", "correctness", "robustness", "fairness", "safety"])
+    args = parser.parse_args()
+
+    rb = args.rb
     assert rb in ["repair", "break"], "rb must be either 'repair' or 'break'"
     obj_col = "repaired" if rb == "repair" else "broken"
 
     # 定数たち
-    perspectives = [
-        # "correctness",
+    all_perspectives = [
+        "correctness",
         "robustness",
         "fairness",
         "safety"
-    ] # TODO: extend to fairness, robustness, safety
+    ]
+    if args.perspective == "all":
+        perspectives = all_perspectives
+    else:
+        perspectives = [args.perspective]
     
     perspectives2methods = {
         "correctness": ["care", "apricot", "arachne"],
@@ -91,7 +101,8 @@ if __name__ == "__main__":
     method4show = {"care": "CARE", "apricot": "Apricot", "arachne": "Arachne", "aprnn": "APRNN"}
 
     # perspectives2methodsのリストの中で最大の長さを設定
-    num_col = max([len(methods) for methods in perspectives2methods.values()])
+    num_col = 3
+    # num_col = max([len(methods) for methods in perspectives2methods.values()])
     num_row = len(perspectives)
 
     # 描画ゾーン
@@ -148,14 +159,15 @@ if __name__ == "__main__":
             else:
                 plt_title = f"{method4show[method]}, {pers.capitalize()}"
                 bbox_to_anchor_y = 1.06
-            if pers == "safety":
-                ax.set_title(plt_title, fontsize=15, y=-0.2)
-            else:
-                ax.set_title(plt_title, fontsize=15)
-    fig.legend(bbox_to_anchor=(0.5, bbox_to_anchor_y), loc="lower center", ncol=2, fontsize=15, facecolor='white', edgecolor='none') # cだけなら1.10, rfsなら1.06
-    fig.tight_layout()
+            # if pers == "safety":
+            #     ax.set_title(plt_title, fontsize=20, y=-0.2)
+            # else:
+            ax.set_title(plt_title, fontsize=20)
+    if perspectives == ["robustness"]:
+        fig.legend(bbox_to_anchor=(0.5, bbox_to_anchor_y), loc="lower center", ncol=2, fontsize=15, facecolor='white', edgecolor='none') # cだけなら1.10, rfsなら1.06
+    wspace = 0.18 if not perspectives == ["safety"] else 0.3
     fig.subplots_adjust(
-        left=0, right=1, bottom=0, top=1, hspace=0.15, wspace=0.18
+        left=0, right=1, bottom=0, top=1, hspace=0.15, wspace=wspace
     )  # この1行を入れる
     # fig.show()
     pers_id = "".join([pers[0] for pers in perspectives])
