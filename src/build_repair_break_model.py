@@ -191,7 +191,7 @@ if __name__ == "__main__":
         # モデル作成時の目的関数
         scoring = "recall" if rb == "break" else "f1"
         # 対象のcsvファイル名
-        if method == "care":
+        if method == "care" or method == "aprnn":
             train_csv_name = f"{dataset}-fairness-setting1-{rb}-trainval.csv"
             test_csv_name = f"{dataset}-fairness-setting1-{rb}-test.csv"
         elif method == "apricot" or method == "arachne":

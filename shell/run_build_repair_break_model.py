@@ -7,8 +7,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     is_safety = args.is_safety
     if is_safety == 1:
-        datasets = ["acasxu_n1_9_prop7", "acasxu_n2_9_prop8", "acasxu_n3_5_prop2"]
-        methods = ["care"]
+        # datasets = ["acasxu_n1_9_prop7", "acasxu_n2_9_prop8", "acasxu_n3_5_prop2"]
+        # methods = ["care"]
+        datasets = ["acasxu_n2_9_prop8", "acasxu_n3_5_prop2"]
+        methods = ["aprnn"]
     else:
         datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
         methods = ["care", "arachne", "apricot"]
