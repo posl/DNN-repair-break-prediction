@@ -20,9 +20,7 @@ if __name__ == "__main__":
     for mi, method in enumerate(methods):
         for di, dataset in enumerate(datasets):
             print(f"run dataset={dataset}, method={method}...")
-            if mi == 0 and di <= 5: # XXX: temp skip
-                continue
-            result = subprocess.run(["python", "build_repair_break_model.py", str(method), str(dataset), "--do_smote"])
+            result = subprocess.run(["python", "build_repair_break_model.py", str(method), str(dataset), "--without_resampling"])
             # サブプロセスのエラーチェック
             if result.returncode != 0:
                 # エラー終了コードを指定してメインプロセスを終了

@@ -184,11 +184,16 @@ if __name__ == "__main__":
     parser.add_argument("method", type=str)
     parser.add_argument("dataset", type=str)
     parser.add_argument("--do_smote", action="store_true")
+    parser.add_argument("--without_resampling", action="store_true")
     args = parser.parse_args()
     # 対象となるデータセット
     method = args.method
     dataset = args.dataset
     do_smote = args.do_smote
+    without_resampling = args.without_resampling
+    # do_smoteとwithout_resamplingが同時にtrueにならないようにする
+    assert not (do_smote and without_resampling), "do_smote and without_resampling cannot be True at the same time."
+    
     # NNが学習したfold数
     nn_folds = 10 if dataset in ["census", "bank"] else 5
     inv_nn_folds = 1 / nn_folds
@@ -239,17 +244,22 @@ if __name__ == "__main__":
         if mino_cnt == 0:
             logger.info("There is only one class in the dataset. No model is created.")
             continue
-        # df_trainに対するresamplingを実行する
-        # resamplingすべきかどうかの判断
-        if mino_cnt >= 10000: # df_trainの少数派行数サイズによって, under samplingの方法を変える
-            df_train = under_sampling(df_train, obj_col, minority=mino, mode="whole_ratio", whole_ratio=2*inv_nn_folds, do_smote=do_smote)
-            logger.info("undersampling is performed. mode='whole_ratio'")
-        elif balance >= 5: # 多数派と少数派のサンプル数の比が5以上なら, 多数派からのunder samplingを実行
-            # resamplingの実行
-            df_train = under_sampling(df_train, obj_col, minority=mino, mode="reduce_ratio", reduce_ratio=inv_nn_folds, do_smote=do_smote)
-            logger.info("undersampling is performed. mode='reduce_ratio'")
-        elif balance is None:
-            logger.info("undersampling is not performed.")
+        # resamplingを実行するかどうかの判断
+        if without_resampling:
+            logger.info("any resampling is not performed because without_resampling is True.")
+            print("any resampling is not performed because without_resampling is True.")
+        else:
+            # df_trainに対するresamplingを実行する
+            # resamplingすべきかどうかの判断
+            if mino_cnt >= 10000: # df_trainの少数派行数サイズによって, under samplingの方法を変える
+                df_train = under_sampling(df_train, obj_col, minority=mino, mode="whole_ratio", whole_ratio=2*inv_nn_folds, do_smote=do_smote)
+                logger.info("undersampling is performed. mode='whole_ratio'")
+            elif balance >= 5: # 多数派と少数派のサンプル数の比が5以上なら, 多数派からのunder samplingを実行
+                # resamplingの実行
+                df_train = under_sampling(df_train, obj_col, minority=mino, mode="reduce_ratio", reduce_ratio=inv_nn_folds, do_smote=do_smote)
+                logger.info("undersampling is performed. mode='reduce_ratio'")
+            elif balance is None:
+                logger.info("undersampling is not performed.")
         X_train, y_train = df_train[exp_metrics], df_train[obj_col]
         print(y_train.value_counts())
         # テストデータをX, yに分割
@@ -272,8 +282,15 @@ if __name__ == "__main__":
         # verboseを事前に設定
         verbose_level = 1
         # 結果保存用のcsvファイル名
-        train_res_filename = f"{dataset}-{rb}-train.csv" if not do_smote else f"{dataset}-{rb}-train-smote.csv"
-        test_res_filename = f"{dataset}-{rb}-test.csv" if not do_smote else f"{dataset}-{rb}-test-smote.csv"
+        if do_smote:
+            train_res_filename = f"{dataset}-{rb}-train-smote.csv"
+            test_res_filename = f"{dataset}-{rb}-test-smote.csv"
+        elif without_resampling:
+            train_res_filename = f"{dataset}-{rb}-train-without_resampling.csv"
+            test_res_filename = f"{dataset}-{rb}-test-without_resampling.csv"
+        else:
+            train_res_filename = f"{dataset}-{rb}-train.csv"
+            test_res_filename = f"{dataset}-{rb}-test.csv"
         train_res_save_path = os.path.join(save_dir, train_res_filename)
         test_res_save_path = os.path.join(save_dir, test_res_filename)
         train_res_arr, test_res_arr = [], []
@@ -316,7 +333,12 @@ if __name__ == "__main__":
             test_res_arr.append(test_res_list)
 
             # 対象のpklファイル名
-            model_filename = f"{dataset}-{rb}-{cname}.pkl" if not do_smote else f"{dataset}-{rb}-{cname}-smote.pkl"
+            if do_smote:
+                model_filename = f"{dataset}-{rb}-{cname}-smote.pkl"
+            elif without_resampling:
+                model_filename = f"{dataset}-{rb}-{cname}-without_resampling.pkl"
+            else:
+                model_filename = f"{dataset}-{rb}-{cname}.pkl"
             model_save_path = os.path.join(save_dir, model_filename)
 
             # 学習済みモデルをpklで保存
@@ -344,5 +366,10 @@ if __name__ == "__main__":
         time_df = time_df.append(fit_time_row, ignore_index=True)
         time_df = time_df.append(inf_time_row, ignore_index=True)
     # 実行時間を保存
-    time_save_path = f"/src/experiments/time_for_repair_break_model-{dataset}-{method}.csv" if not do_smote else f"/src/experiments/time_for_repair_break_model-{dataset}-{method}-smote.csv"
+    if do_smote:
+        time_save_path = f"/src/experiments/time_for_repair_break_model-{dataset}-{method}-smote.csv"
+    elif without_resampling:
+        time_save_path = f"/src/experiments/time_for_repair_break_model-{dataset}-{method}-without_resampling.csv"
+    else:
+        time_save_path = f"/src/experiments/time_for_repair_break_model-{dataset}-{method}.csv"
     time_df.to_csv(time_save_path, index=False)
