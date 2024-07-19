@@ -105,6 +105,10 @@ if __name__ == "__main__":
     # num_col = max([len(methods) for methods in perspectives2methods.values()])
     num_row = len(perspectives)
 
+    if len(perspectives) == 1 and perspectives[0] == "safety":
+        num_row = 2
+        num_col = 1
+
     # 描画ゾーン
     fig = plt.figure(figsize=(3*num_col, 3*num_row))
     gs = gridspec.GridSpec(num_row, num_col, figure=fig)
@@ -112,7 +116,11 @@ if __name__ == "__main__":
         for mi, method in enumerate(perspectives2methods[pers]):
             print(f"pers={pers}, method={method}")
             # pane_id = num_col * pi + mi + 1
-            ax = fig.add_subplot(gs[pi, mi], projection="polar")
+            if len(perspectives) == 1 and perspectives[0] == "safety":
+                assert pi == 0, "pi must be 0 in this case"
+                ax = fig.add_subplot(gs[mi, 0], projection="polar")
+            else:
+                ax = fig.add_subplot(gs[pi, mi], projection="polar")
             # スペースの都合上, データセットに関しては全てまとめて平均する
             df_list = []
             for ds in perspectives2datasets[pers]:
@@ -166,8 +174,9 @@ if __name__ == "__main__":
     if perspectives == ["robustness"]:
         fig.legend(bbox_to_anchor=(0.5, bbox_to_anchor_y), loc="lower center", ncol=2, fontsize=15, facecolor='white', edgecolor='none') # cだけなら1.10, rfsなら1.06
     wspace = 0.18 if not perspectives == ["safety"] else 0.3
+    hspace = 0.15 if not perspectives == ["safety"] else 0.4
     fig.subplots_adjust(
-        left=0, right=1, bottom=0, top=1, hspace=0.15, wspace=wspace
+        left=0, right=1, bottom=0, top=1, hspace=hspace, wspace=wspace
     )  # この1行を入れる
     # fig.show()
     pers_id = "".join([pers[0] for pers in perspectives])

@@ -1,4 +1,4 @@
-import os, sys, time
+import os, sys, time, argparse
 import pickle
 from collections import defaultdict
 from itertools import product
@@ -8,6 +8,7 @@ import numpy as np
 from lib.log import set_exp_logging
 import matplotlib.pyplot as plt
 import seaborn as sns
+from imblearn.over_sampling import SMOTE
 
 # plot setting
 sns.set()
@@ -94,7 +95,7 @@ def plot_conf_mat(clf, X, y):
     plt.show()
 
 
-def under_sampling(df, target_column, minority=True, mode=None, sample_size_ratio=None, reduce_ratio=None, whole_ratio=None):
+def under_sampling(df, target_column, minority=True, mode=None, sample_size_ratio=None, reduce_ratio=None, whole_ratio=None, do_smote=False):
     """dfのある列target_columnにおいて, 多数派の属性を持つ行を間引いて少数派minorityの行数にmajorityの行数を合わせたdfを返す
 
     Args:
@@ -104,6 +105,7 @@ def under_sampling(df, target_column, minority=True, mode=None, sample_size_rati
         sample_size_ratio (float) : 多数派のラベルのデータ数を，少数派のラベルのデータ数の何倍にするか.
         reduce_ratio (float) : 多数派のラベルのデータ数からどれくらいの割合でサンプリングするか. sample_size_ratioと同時に指定することはできなず, その場合はエラー終了.
         whole_ratio (float) : 両方のラベルから均等にサンプリングする場合の割合.
+        do_smote (boolean) : under samplingの後にsmoteによる少数クラスのオーバーサンプリングをおこなうかどうか.
 
     Returns:
         pd.DataFrame : 間引いた後のdf
@@ -129,7 +131,6 @@ def under_sampling(df, target_column, minority=True, mode=None, sample_size_rati
         df_sampled_majority = df_only_majority.sample(n=majo_sample_size)
         df_concat = pd.concat([df_sampled_minority, df_sampled_majority])
         df_concat = df_concat.sample(frac=1, random_state=726)
-        return df_concat
     # 少ない方の行数のX倍まで多い方の行をサンプリングする
     if mode == "sample_size_ratio":
         assert sample_size_ratio is not None
@@ -138,7 +139,6 @@ def under_sampling(df, target_column, minority=True, mode=None, sample_size_rati
         df_sampled = df_only_majority.sample(n=sample_size, random_state=629)
         df_concat = pd.concat([df_only_minority, df_sampled])
         df_concat = df_concat.sample(frac=1, random_state=726)
-        return df_concat
     # 多い方の行数からX%の割合でサンプリングする
     if mode == "reduce_ratio":
         assert reduce_ratio is not None
@@ -147,7 +147,18 @@ def under_sampling(df, target_column, minority=True, mode=None, sample_size_rati
         df_sampled = df_only_majority.sample(n=sample_size, random_state=629)
         df_concat = pd.concat([df_only_minority, df_sampled])
         df_concat = df_concat.sample(frac=1, random_state=726)
-        return df_concat
+    if do_smote:
+        k_neighbors = 2
+        try:
+            # to do smote sampling for the minority class
+            sm = SMOTE(k_neighbors=k_neighbors, sampling_strategy="auto", random_state=42)
+            # SMOTEを実行
+            X_res, y_res = sm.fit_resample(df_concat.drop(columns=[target_column]), df_concat[target_column])
+            df_concat = pd.concat([X_res, y_res], axis=1)
+        except ValueError:
+            print("SMOTE failed due to the small number of the minority class samples.")
+            return df_concat
+    return df_concat
 
 
 # TODO: これらの定数を外部化
@@ -168,9 +179,16 @@ num_folds = 5
 if __name__ == "__main__":
     # このプログラムのファイル名を取得
     file_name = os.path.splitext(sys.argv[0])[0]
+    # 引数の受け取り
+    parser = argparse.ArgumentParser()
+    parser.add_argument("method", type=str)
+    parser.add_argument("dataset", type=str)
+    parser.add_argument("--do_smote", action="store_true")
+    args = parser.parse_args()
     # 対象となるデータセット
-    method = sys.argv[1]
-    dataset = sys.argv[2]
+    method = args.method
+    dataset = args.dataset
+    do_smote = args.do_smote
     # NNが学習したfold数
     nn_folds = 10 if dataset in ["census", "bank"] else 5
     inv_nn_folds = 1 / nn_folds
@@ -210,6 +228,7 @@ if __name__ == "__main__":
 
         # obj_colの値の多数派 (in trainval) がTrueかFalseかを判断する
         obj_col_cnts = df_train[obj_col].value_counts(ascending=False)
+        print(df_train[obj_col].value_counts())
         majo = obj_col_cnts.index.values[0]  # 多数派
         mino = not majo  # 少数派
         majo_cnt = obj_col_cnts[majo]  # 多数派のサンプル数
@@ -223,15 +242,16 @@ if __name__ == "__main__":
         # df_trainに対するresamplingを実行する
         # resamplingすべきかどうかの判断
         if mino_cnt >= 10000: # df_trainの少数派行数サイズによって, under samplingの方法を変える
-            df_train = under_sampling(df_train, obj_col, minority=mino, mode="whole_ratio", whole_ratio=2*inv_nn_folds)
+            df_train = under_sampling(df_train, obj_col, minority=mino, mode="whole_ratio", whole_ratio=2*inv_nn_folds, do_smote=do_smote)
             logger.info("undersampling is performed. mode='whole_ratio'")
         elif balance >= 5: # 多数派と少数派のサンプル数の比が5以上なら, 多数派からのunder samplingを実行
             # resamplingの実行
-            df_train = under_sampling(df_train, obj_col, minority=mino, mode="reduce_ratio", reduce_ratio=inv_nn_folds)
+            df_train = under_sampling(df_train, obj_col, minority=mino, mode="reduce_ratio", reduce_ratio=inv_nn_folds, do_smote=do_smote)
             logger.info("undersampling is performed. mode='reduce_ratio'")
         elif balance is None:
             logger.info("undersampling is not performed.")
         X_train, y_train = df_train[exp_metrics], df_train[obj_col]
+        print(y_train.value_counts())
         # テストデータをX, yに分割
         X_test, y_test = df_test[exp_metrics], df_test[obj_col]
         logger.info(f"(AFTER RESAMP.) X_train.shape={X_train.shape}, X_test.shape={X_test.shape}")
@@ -252,8 +272,8 @@ if __name__ == "__main__":
         # verboseを事前に設定
         verbose_level = 1
         # 結果保存用のcsvファイル名
-        train_res_filename = f"{dataset}-{rb}-train.csv"
-        test_res_filename = f"{dataset}-{rb}-test.csv"
+        train_res_filename = f"{dataset}-{rb}-train.csv" if not do_smote else f"{dataset}-{rb}-train-smote.csv"
+        test_res_filename = f"{dataset}-{rb}-test.csv" if not do_smote else f"{dataset}-{rb}-test-smote.csv"
         train_res_save_path = os.path.join(save_dir, train_res_filename)
         test_res_save_path = os.path.join(save_dir, test_res_filename)
         train_res_arr, test_res_arr = [], []
@@ -296,7 +316,7 @@ if __name__ == "__main__":
             test_res_arr.append(test_res_list)
 
             # 対象のpklファイル名
-            model_filename = f"{dataset}-{rb}-{cname}.pkl"
+            model_filename = f"{dataset}-{rb}-{cname}.pkl" if not do_smote else f"{dataset}-{rb}-{cname}-smote.pkl"
             model_save_path = os.path.join(save_dir, model_filename)
 
             # 学習済みモデルをpklで保存
@@ -324,4 +344,5 @@ if __name__ == "__main__":
         time_df = time_df.append(fit_time_row, ignore_index=True)
         time_df = time_df.append(inf_time_row, ignore_index=True)
     # 実行時間を保存
-    time_df.to_csv(f"/src/experiments/time_for_repair_break_model-{dataset}-{method}.csv", index=False)
+    time_save_path = f"/src/experiments/time_for_repair_break_model-{dataset}-{method}.csv" if not do_smote else f"/src/experiments/time_for_repair_break_model-{dataset}-{method}-smote.csv"
+    time_df.to_csv(time_save_path, index=False)
