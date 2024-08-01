@@ -6,7 +6,7 @@ Dは標準入力で与える
 import os, sys
 import pickle
 from collections import defaultdict
-from itertools import permutations
+from itertools import permutations, combinations
 import pandas as pd
 import numpy as np
 from lib.log import set_exp_logging
@@ -20,6 +20,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from build_repair_break_model import print_perf
 
 methods = ["care", "apricot", "arachne"]
+methods4show = {
+    "care": "CARE",
+    "apricot": "Apricot",
+    "arachne": "Arachne"
+}
 exp_metrics = ["pcs", "lps", "loss", "entropy"]
 
 def get_models(model_dir, ds, rb):
@@ -70,7 +75,10 @@ if __name__ == "__main__":
         # transferabilityの結果を保存するdf
         transferability_df = pd.DataFrame(columns=[methods], index=[methods], data=[])
         compatibility_df = pd.DataFrame(columns=[methods], index=[methods], data=[])
+        
         for mt_src, mt_tar in permutations(methods, 2):
+            if not ((mt_src == "care" and mt_tar == "arachne") or (mt_tar == "care" and mt_src == "arachne")):
+                continue
             print(f"mt_src={mt_src}, mt_tar={mt_tar}, rb={rb}")
             # ディレクトリの指定
             src_model_save_dir = os.path.join(f"/src/experiments/{mt_src}", "repair_break_model") # srcの修正手法のためのモデル
@@ -80,8 +88,10 @@ if __name__ == "__main__":
             src_model_dic = get_models(src_model_save_dir, dataset, rb)
             tar_model_dic = get_models(tar_model_save_dir, dataset, rb)
             # datasetに対するmt_tarのデータを読み込み
+            print(data_save_dir)
             df_test = get_test_df(data_save_dir, mt_tar, dataset, rb)
             X_test, y_test = df_test[exp_metrics], df_test[obj_col]
+            print(X_test.head())
             # ds_srcのモデルでds_tarのテストデータを予測して結果をarrayにまとめる
             src_test_res_arr = []
             tar_test_res_arr = []
@@ -102,7 +112,8 @@ if __name__ == "__main__":
             org_res_arr[org_res_arr == 0] = np.nan
             # nanを除いて平均してdfに格納
             transferability_df.loc[mt_src, mt_tar] = np.nanmean(src_test_res_arr / org_res_arr)
+            # compatibility_dictをdfに追加
             compatibility_df.loc[mt_src, mt_tar] = np.mean(tar_test_res_arr)
         # 結果を保存
         transferability_df.to_csv(os.path.join(transferability_dir, f"{dataset}-{rb}.csv"))
-        compatibility_df.to_csv(os.path.join(compatibility_dir, f"{dataset}-{rb}.csv"))
+        compatibility_df.to_csv(os.path.join(compatibility_dir, f"{dataset}-{rb}.csv"), index=False)

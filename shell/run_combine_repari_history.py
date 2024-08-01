@@ -6,13 +6,8 @@ if __name__ == "__main__":
     os.chdir("../src")
     # foldとrepを指定して実行
     for dataset in datasets:
-        result = subprocess.run(["python", "transfer_methods.py", str(dataset)])
+        result = subprocess.run(["python", "combine_repair_history.py", str(dataset)])
         # サブプロセスのエラーチェック
         if result.returncode != 0:
             # エラー終了コードを指定してメインプロセスを終了
             exit(1)
-    result = subprocess.run(["python", "concat_transfer_methods.py"])
-    # サブプロセスのエラーチェック
-    if result.returncode != 0:
-        # エラー終了コードを指定してメインプロセスを終了
-        exit(1)
