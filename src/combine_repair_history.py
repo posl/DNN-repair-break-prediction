@@ -193,8 +193,6 @@ if __name__ == "__main__":
     inv_nn_folds = 1 / nn_folds
     # ログファイルの生成
     logger = set_exp_logging(f"/src/experiments/care", f'{dataset}-{file_name.replace("_", "-")}')
-    # 実行時間
-    time_df = pd.DataFrame(columns=["rb", "fit_or_inf", "lr", "lgb", "rf"])
 
     # methodごとのrepairs/breaksデータセットをdictに入れていく
     for rb in ["repair", "break"]:
