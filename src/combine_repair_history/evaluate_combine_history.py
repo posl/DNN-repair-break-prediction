@@ -1,5 +1,5 @@
 import os, sys
-import pickle
+import re
 from collections import defaultdict
 from itertools import combinations
 import pandas as pd
@@ -13,6 +13,29 @@ def reorder_method(mA, mB):
     remaining = [m for m in methods if m not in [mA, mB]]
     assert len(remaining) == 1, f"remaining: {remaining}"
     return [mA, mB, remaining[0]]
+
+def get_val_and_percent(cell):
+    match = re.match(r"([0-9.]+) \((-?[0-9.]+)%\)", cell)
+    if match:
+        value = float(match.group(1))
+        percentage = float(match.group(2))
+        return value, percentage
+    else:
+        raise ValueError(f"cell: {cell}")
+
+def get_avg_val_and_percent(res_arr):
+    values = []
+    percentages = []
+    for cell in res_arr.flatten():
+        value, percentage = get_val_and_percent(cell)
+        values.append(value)
+        percentages.append(percentage)
+    # valuesとpercentagesの形状を変換
+    values = np.array(values).reshape(res_arr.shape)
+    percentages = np.array(percentages).reshape(res_arr.shape)
+    avg_value = np.nanmean(values, axis=0)
+    avg_percentage = np.nanmean(percentages, axis=0)
+    return avg_value, avg_percentage
 
 methods = ["care", "apricot", "arachne"]
 datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
@@ -74,6 +97,10 @@ if __name__ == "__main__":
                 res_arr.append(tmp_arr)
         # res_arrをndarrayに変換
         res_arr = np.asarray(res_arr)
+        # res_arrの最後の行に平均を追加する
+        avg_value, avg_percentage = get_avg_val_and_percent(res_arr)
+        last_row = [f"{av:.3f} ({ap:.1f}%)" for av, ap in zip(avg_value, avg_percentage)]
+        res_arr = np.vstack([res_arr, last_row])
         print(res_arr)
         print(res_arr.shape)
         # res_arrをcsvで保存
