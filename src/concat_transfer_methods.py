@@ -11,6 +11,8 @@ import seaborn as sns
 sns.set()
 
 if __name__ == "__main__":
+    tf_mode = "f1"
+    # tf_mode = ""
     # このプログラムのファイル名を取得
     datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
     # 保存先のディレクトリ
@@ -22,7 +24,14 @@ if __name__ == "__main__":
         for dir in [transferability_dir, compatibility_dir]:
             df_list = []
             for dataset in datasets:
-                df_list.append(pd.read_csv(os.path.join(dir, f"{dataset}-{rb}.csv")))
+                if tf_mode == "f1" and dir == transferability_dir:
+                    df_path = os.path.join(dir, f"{dataset}-{rb}-f1.csv")
+                    res_save_path = os.path.join(dir, f"all-{rb}-f1.csv")
+                else:
+                    df_path = os.path.join(dir, f"{dataset}-{rb}.csv")
+                    res_save_path = os.path.join(dir, f"all-{rb}.csv")
+                df_list.append(pd.read_csv(df_path))
             # trans_df_listを縦に結合
             trans_df = pd.concat(df_list)
-            trans_df.to_csv(os.path.join(dir, f"all-{rb}.csv"), index=False)
+            trans_df.to_csv(res_save_path, index=False)
+

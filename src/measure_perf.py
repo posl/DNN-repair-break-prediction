@@ -1,4 +1,4 @@
-import os, sys, time
+import os, sys, time, argparse
 import pickle
 from collections import defaultdict
 from itertools import product
@@ -75,8 +75,6 @@ def initialize_list_cell():
 
 
 # =====================================================
-# 対象とするrepair手法のリスト
-methods = ["care", "apricot", "arachne"]
 # 対象とするdatasets
 datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
 model_impl = ["lr", "rf", "lgb"]
@@ -85,10 +83,17 @@ model_impl = ["lr", "rf", "lgb"]
 if __name__ == "__main__":
     # このプログラムのファイル名を取得
     file_name = os.path.splitext(sys.argv[0])[0]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--without_Apricot", action="store_true")
+    args = parser.parse_args()
+    if not args.without_Apricot:
+        methods = ["care", "apricot", "arachne"]
+    else:
+        methods = ["care", "arachne"]
 
     res_arr = []
     for di, dataset in enumerate(datasets):
-        arr_for_ds = [[], [], []]
+        arr_for_ds = [[] for _ in range(len(methods))]
         for mi, method in enumerate(methods):
             # 実験のディレクトリと実験名を取得
             exp_dir = f"/src/experiments/{method}"
@@ -126,6 +131,7 @@ if __name__ == "__main__":
                 ratio = (np.sum(y_pred_rep) / len(y_pred_rep)) - (np.sum(y_pred_bre) / len(y_pred_bre))
                 arr_for_ds_method[2][ii] = ratio
             arr_for_ds[mi] = arr_for_ds_method
+        print(arr_for_ds)
         res_arr.append(np.concatenate(arr_for_ds, axis=1)) # methodで横に繋げる (列の長さが *methodsの数 になる)
     res_arr = np.concatenate(res_arr, axis=0) # datasetで縦につなげる (行の長さが *datasetsの数 になる)
     # 列がLRに対する各メソッドの値, RF..., LGB,...となるように列の順番を入れ替える
@@ -136,4 +142,5 @@ if __name__ == "__main__":
     # res_arrをcsvで保存
     save_dir = "/src/experiments/method-selection"
     os.makedirs(save_dir, exist_ok=True)
-    np.savetxt(os.path.join(save_dir, f"selection_values.csv"), res_arr, delimiter=",")
+    filename = os.path.join(save_dir, f"selection_values.csv") if not args.without_Apricot else os.path.join(save_dir, f"selection_values_without_Apricot.csv")
+    np.savetxt(filename, res_arr, delimiter=",", fmt="%.3f")

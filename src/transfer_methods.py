@@ -26,6 +26,7 @@ methods4show = {
     "arachne": "Arachne"
 }
 exp_metrics = ["pcs", "lps", "loss", "entropy"]
+perf_metrics = ["accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc"]
 
 def get_models(model_dir, ds, rb):
     model_dic = {}
@@ -73,7 +74,9 @@ if __name__ == "__main__":
         # 目的変数
         obj_col = "repaired" if rb == "repair" else "broken"
         # transferabilityの結果を保存するdf
-        transferability_df = pd.DataFrame(columns=[methods], index=[methods], data=[])
+        transferability_dic = defaultdict(pd.DataFrame)
+        for i, perf_met in enumerate(perf_metrics):
+                transferability_dic[perf_met] = pd.DataFrame(columns=[methods], index=[methods], data=[])
         compatibility_df = pd.DataFrame(columns=[methods], index=[methods], data=[])
         
         for mt_src, mt_tar in permutations(methods, 2):
@@ -109,9 +112,11 @@ if __name__ == "__main__":
             src_test_res_arr[src_test_res_arr == 0] = np.nan
             org_res_arr[org_res_arr == 0] = np.nan
             # nanを除いて平均してdfに格納
-            transferability_df.loc[mt_src, mt_tar] = np.nanmean(src_test_res_arr / org_res_arr)
+            for i, perf_met in enumerate(perf_metrics):
+                transferability_dic[perf_met].loc[mt_src, mt_tar] = np.nanmean(src_test_res_arr[:, i] / org_res_arr[:, i])
             # compatibility_dictをdfに追加
             compatibility_df.loc[mt_src, mt_tar] = np.mean(tar_test_res_arr)
         # 結果を保存
-        transferability_df.to_csv(os.path.join(transferability_dir, f"{dataset}-{rb}.csv"))
+        for i, perf_met in enumerate(perf_metrics):
+            transferability_dic[perf_met].to_csv(os.path.join(transferability_dir, f"{dataset}-{rb}-{perf_met}.csv"))
         compatibility_df.to_csv(os.path.join(compatibility_dir, f"{dataset}-{rb}.csv"), index=False)

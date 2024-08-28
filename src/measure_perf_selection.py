@@ -19,35 +19,42 @@ def make_decision(row):
     return uniq[np.argmax(count)]
 
 if __name__ == "__main__":
-    methods = ["CARE", "Apricot", "Arachne"]
-    methods4show = ["CARE", "Apricot", "Arachne", "NOP"]
-    ID_NOP = 3 # NOPを表すID
 
     # c1の閾値はコマンドラインで受け取り，のこりはc1から計算
     parser = argparse.ArgumentParser()
     parser.add_argument("--c1_th", type=float, default=0.4, help="Threshold variable for c1")
     parser.add_argument("--c2_th", type=float, default=0.8, help="Threshold variable for c2")
+    parser.add_argument("--without_Apricot", action="store_true")
     args = parser.parse_args()
     nop_ths = [args.c1_th, args.c2_th, args.c1_th - (1-args.c2_th)]
+    if not args.without_Apricot:
+        methods = ["care", "apricot", "arachne"]
+        methods4show = ["CARE", "Apricot", "Arachne", "NOP"]
+    else:
+        methods = ["care", "arachne"]
+        methods4show = ["CARE", "Arachne", "NOP"]
+    ID_NOP = len(methods) # NOPを表すID
     print(f"nop_ths = {nop_ths} ([c1, c2, c3])")
     # model_perfの結果をロード
     save_dir = "/src/experiments/method-selection"
-    arr = np.loadtxt(os.path.join(save_dir, f"selection_values.csv"), delimiter=",")
+    sv_filename = os.path.join(save_dir, f"selection_values.csv") if not args.without_Apricot else os.path.join(save_dir, f"selection_values_without_Apricot.csv")
+    arr = np.loadtxt(sv_filename, delimiter=",")
 
     # 3列毎にarrをチェックして, i列目の値が最大ならmethods[i]をセレクションの結果とする
     # NOPの決定のためにCiの最大値も取っておく
-    selection_results = np.empty((arr.shape[0], arr.shape[1]//3))
-    selection_values = np.empty((arr.shape[0], arr.shape[1]//3))
-    for j in range(0, arr.shape[1], 3):
-        arr_impl = arr[:, j:j+3]
-        selection_results[:, j//3] = np.argmax(arr_impl, axis=1)
-        selection_values[:, j//3] = np.max(arr_impl, axis=1)
+    selection_results = np.empty((arr.shape[0], arr.shape[1]//len(methods)))
+    selection_values = np.empty((arr.shape[0], arr.shape[1]//len(methods)))
+    for j in range(0, arr.shape[1], len(methods)):
+        arr_impl = arr[:, j:j+len(methods)]
+        selection_results[:, j//len(methods)] = np.argmax(arr_impl, axis=1)
+        selection_values[:, j//len(methods)] = np.max(arr_impl, axis=1)
 
     # 閾値を下回る場合はNOPにする
     for row_idx, (sv, sr) in enumerate(zip(selection_values, selection_results)):
-        ci_idx = row_idx % 3
+        ci_idx = row_idx % len(methods)
         th = nop_ths[ci_idx]
         selection_results[row_idx] = np.where(sv < th, ID_NOP, sr)
+    print(selection_results)
     selection_results = np.vectorize(lambda x: methods4show[int(x)])(selection_results) # np.vectorizeは関数の入力をベクトルかできるやつらしい
 
     # 各列の中で最も多い要素を選ぶ
@@ -63,8 +70,8 @@ if __name__ == "__main__":
     for row in scores_for_nan:
         # 各implの自信の配列
         conf_scores = []
-        for j in range(0, len(row), 3):
-            row_impl = row[j:j+3]
+        for j in range(0, len(row), len(methods)):
+            row_impl = row[j:j+len(methods)]
             # row_implの中の最大値と2番目に大きい値の差を取得
             conf_scores.append(np.max(row_impl) - np.sort(row_impl)[-2])
         print(conf_scores)
@@ -76,11 +83,10 @@ if __name__ == "__main__":
     print(f"selection_results: {selection_results}")
 
     # 実際の良かったやつと比較
-    methods = ["care", "apricot", "arachne"]
     datasets = ["credit", "census", "bank", "fm", "c10", "gtsrb", "imdb", "rtmr"]
 
     # method, datasetごとにtest setをロードしてきてまとめればいいんちゃう
-    arr_for_method = [[], [], []]
+    arr_for_method = [[] for _ in range(len(methods))]
     for mi, method in enumerate(methods):
         for di, dataset in enumerate(datasets):
             # 実験のディレクトリと実験名を取得
@@ -105,6 +111,7 @@ if __name__ == "__main__":
             # s3: balance
             balance = repair_ratio - break_ratio
             arr_for_method[mi].append(balance)
+    print(arr_for_method)
     correct_arr = np.array(arr_for_method).T
     correct_values = np.max(correct_arr, axis=1)
     correct_results = np.argmax(correct_arr, axis=1)
@@ -117,4 +124,5 @@ if __name__ == "__main__":
 
     correct_results = np.vectorize(lambda x: methods4show[int(x)])(correct_results) # np.vectorizeは関数の入力をベクトルかできるやつらしい
     res_arr = np.concatenate([selection_results, correct_results.reshape(-1, 1)], axis=1)
-    np.savetxt(os.path.join(save_dir, f"selection_results.csv"), res_arr, delimiter=",", fmt="%s")
+    filename = os.path.join(save_dir, f"selection_results.csv") if not args.without_Apricot else os.path.join(save_dir, f"selection_results_without_Apricot.csv")
+    np.savetxt(filename, res_arr, delimiter=",", fmt="%s")
