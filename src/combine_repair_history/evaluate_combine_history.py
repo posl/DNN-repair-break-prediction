@@ -15,6 +15,9 @@ def reorder_method(mA, mB):
     return [mA, mB, remaining[0]]
 
 def get_val_and_percent(cell):
+    # cellという文字列にnanが含まれる場合
+    if "nan" in cell:
+        return np.nan, np.nan
     match = re.match(r"([0-9.]+) \((-?[0-9.]+)%\)", cell)
     if match:
         value = float(match.group(1))
@@ -44,10 +47,17 @@ methods4show = {
     "apricot": "Apricot",
     "arachne": "Arachne"
 }
+perf_metrics = ["accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc"]
+
 
 if __name__ == "__main__":
     # このプログラムのファイル名を取得
     file_name = os.path.splitext(sys.argv[0])[0]
+    used_perf_met = str(sys.argv[1])
+    print(f"used_perf_met: {used_perf_met}")
+    # perf_metricsの中に無かったらエラー終了
+    if used_perf_met != "all" and used_perf_met not in perf_metrics:
+        raise ValueError(f"used_perf_met: {used_perf_met}")
 
     for rb in ["repair", "break"]:
         # 結果を保存するarr
@@ -77,17 +87,23 @@ if __name__ == "__main__":
                     org_res_df = pd.read_csv(org_res_path)
                     org_res_arr = org_res_df.values
                     org_res_arr[org_res_arr == 0] = np.nan # 0除算回避
-                    pp_rate = np.nanmean(tgt_res_arr / org_res_arr)
+                    if used_perf_met == "all":
+                        pp_rate = np.nanmean(tgt_res_arr / org_res_arr)
+                    else:
+                        pp_rate = np.nanmean(tgt_res_arr[:, perf_metrics.index(used_perf_met)] / org_res_arr[:, perf_metrics.index(used_perf_met)])
                     if tgt_method == remained_method:
                         tmp_arr.append(pp_rate)
                     else:
-                        mean_perf = np.nanmean(tgt_res_arr)
-                        tmp_arr.append(f"{mean_perf:.3f} ({(pp_rate-1):.1%})")
+                        mean_perf = np.nanmean(tgt_res_arr) if used_perf_met == "all" else np.nanmean(tgt_res_arr[:, perf_metrics.index(used_perf_met)])
+                        tmp_arr.append(f"{mean_perf:.3f} ({(pp_rate-1):.1%})") # pp_rate-1 はパーセンテージの増減を表すため
                 
                 # mAのモデルからremained_method, mBのモデルからremained_methodへのtransf. score
                 transferability_dir = os.path.join("/src/experiments/", "method-transferability")
-                org_transf_df = pd.read_csv(os.path.join(transferability_dir
-                , f"{dataset}-{rb}.csv"))
+                if used_perf_met == "all":
+                    transferability_path = os.path.join(transferability_dir, f"{dataset}-{rb}.csv")
+                else:
+                    transferability_path = os.path.join(transferability_dir, f"{dataset}-{rb}-{used_perf_met}.csv")
+                org_transf_df = pd.read_csv(transferability_path)
                 transpp_mA2remained = org_transf_df[remained_method][methods.index(mA)]
                 transpp_mB2remained = org_transf_df[remained_method][methods.index(mB)]
                 transpp_ex = max(transpp_mA2remained, transpp_mB2remained)
@@ -101,10 +117,14 @@ if __name__ == "__main__":
         avg_value, avg_percentage = get_avg_val_and_percent(res_arr)
         last_row = [f"{av:.3f} ({ap:.1f}%)" for av, ap in zip(avg_value, avg_percentage)]
         res_arr = np.vstack([res_arr, last_row])
+        res_arr = np.where(np.char.find(res_arr, "nan") != -1, "N/A", res_arr) # nanが含まれるセルは "N/A" に置換
         print(res_arr)
         print(res_arr.shape)
         # res_arrをcsvで保存
         # 保存先のディレクトリ
         res_dir = os.path.join("/src/src/combine_repair_history")
-        res_file = os.path.join(res_dir, f"{rb}.csv")
-        np.savetxt(res_file, res_arr, delimiter=",", fmt='%s')
+        if used_perf_met == "all":
+            res_path = os.path.join(res_dir, f"{rb}.csv")
+        else:
+            res_path = os.path.join(res_dir, f"{rb}-{used_perf_met}.csv")
+        np.savetxt(res_path, res_arr, delimiter=",", fmt='%s')
